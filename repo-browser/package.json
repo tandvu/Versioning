@@ -1,0 +1,23 @@
+{
+  "name": "repo-browser-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspace server && npm install --workspace client",
+    "dev": "concurrently \"npm:dev-server\" \"npm:dev-client\"",
+    "dev-server": "npm run dev --workspace server",
+    "dev-client": "npm run dev --workspace client",
+    "dev:open": "concurrently \"npm:dev-server\" \"npm:dev-client-open\"",
+    "dev-client-open": "npm run dev --workspace client",
+    "build": "npm run build --workspace server && npm run build --workspace client",
+    "start:prod": "npm run start:client --workspace server",
+    "build-and-start": "npm run build && npm run start:prod"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

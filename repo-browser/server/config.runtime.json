@@ -1,0 +1,23 @@
+{
+  "basePaths": [
+    "C:/AMPT",
+    "C:/AMPT_DEV/TRMC_MODULE"
+  ],
+  "ignore": {
+    "C:/AMPT": [
+      ".git",
+      "7 Wonders",
+      "SOA",
+      "datalayerp",
+      "deps",
+      "docs",
+      "minerva",
+      "organizational-chart-with-d3-js-expandable-zoomable",
+      "quarkus",
+      "react-d3-tree-example",
+      "src",
+      "staging",
+      "tests"
+    ]
+  }
+}

@@ -1,0 +1,203 @@
+/* Spinner animation for Start Versioning button */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #ccc;
+  border-top: 2px solid #60a5fa;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.btn {
+  --btn-bg: #1e293b;
+  --btn-bg-hover: #2a3b52;
+  --btn-bg-active: #1b2533;
+  --btn-border: #334155;
+  --btn-border-hover: #3b4c63;
+  --btn-radius: 6px;
+  --btn-color: #e2e8f0;
+  --btn-font-size: .85rem;
+  --btn-padding-y: .55rem;
+  --btn-padding-x: .9rem;
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--btn-color);
+  padding: var(--btn-padding-y) var(--btn-padding-x);
+  border-radius: var(--btn-radius);
+  font-size: var(--btn-font-size);
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  user-select: none;
+  transition: background .15s, border-color .15s, box-shadow .15s, transform .15s;
+  text-decoration: none;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--btn-bg-hover);
+  border-color: var(--btn-border-hover);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, .4);
+}
+
+.btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  --btn-bg: #2563eb;
+  --btn-bg-hover: #1d5fdc;
+  --btn-bg-active: #184fae;
+  --btn-border: #1d4ed8;
+  --btn-border-hover: #2563eb;
+  --btn-color: #fff;
+}
+
+.btn-secondary {
+  --btn-bg: #334155;
+  --btn-bg-hover: #425369;
+  --btn-bg-active: #2b394a;
+  --btn-border: #475569;
+  --btn-border-hover: #5b6b7c;
+}
+
+.btn-outline {
+  background: rgba(255, 255, 255, 0.03);
+  --btn-color: #dbe2ea;
+  border: 1px solid #3a4a5c;
+}
+
+.btn-outline:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-icon {
+  --btn-padding-y: .45rem;
+  --btn-padding-x: .6rem;
+  font-size: .9rem;
+}
+
+.btn-icon.is-active,
+.btn.is-active {
+  box-shadow: 0 0 0 1px #1d4ed8 inset;
+  background: #1f3660;
+  border-color: #2563eb;
+}
+
+.btn-group-vertical {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+.btn-full {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+}
+
+/* Subtle fade-in for new buttons */
+.btn {
+  animation: btnFade .25s ease-out;
+}
+
+@keyframes btnFade {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Repository path link styling */
+.repo-path-link {
+  color: #e0f2fe;
+  font-weight: 600;
+  text-decoration: none;
+  position: relative;
+  cursor: pointer;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.35);
+  padding-bottom: 1px;
+  transition: color .15s ease, text-shadow .2s ease, border-color .15s ease, background .15s ease;
+}
+
+.repo-path-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.repo-path-link:hover {
+  text-decoration: none;
+  border-bottom: 1px solid #ffffff;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.65), 0 0 10px rgba(96, 165, 250, 0.45);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0));
+}
+
+.repo-path-link:active {
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.75);
+  border-bottom: 1px solid #93c5fd;
+}
+
+/* Textarea styling for repo filter */
+.repo-textarea {
+  background: #141c24;
+  border: 1px solid #2d3b48;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: .65rem .75rem;
+  font-size: .82rem;
+  line-height: 1.35;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  transition: border-color .14s ease, box-shadow .14s ease, background .25s ease;
+  resize: vertical;
+}
+
+.repo-textarea:focus-visible {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #3b82f6, 0 0 0 4px rgba(59, 130, 246, 0.25);
+}
+
+.repo-textarea:hover:not(:disabled) {
+  border-color: #395065;
+}
+
+.repo-textarea::placeholder {
+  color: #94a3b8;
+  /* toned down */
+  opacity: .3;
+}
+
+.repo-textarea:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
