@@ -74,3 +74,11 @@ export function resolveDeployVersion(repo: string, deployVersions?: Record<strin
   RESOLUTION_CACHE[repo] = undefined;
   return undefined;
 }
+
+/** Clear the in-memory resolution cache. Call this when deployVersions changes so
+ * previously cached (possibly undefined) resolutions are recomputed against the
+ * new deployVersions object.
+ */
+export function clearResolutionCache() {
+  for (const k of Object.keys(RESOLUTION_CACHE)) delete RESOLUTION_CACHE[k];
+}

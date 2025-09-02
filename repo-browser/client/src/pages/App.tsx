@@ -9,6 +9,7 @@ import { ProgressList, RepoProgress } from '../components/ProgressList';
 import { Settings } from '../components/Settings';
 import { detectApiBase } from '../api';
 import ignoreDefaults from '../IgnoreFolders.json';
+import { clearResolutionCache } from '../lib/deployMapping';
 // Simple polling log viewer for server debug lines
 // Removed client File System Access handling; using server-managed base paths only.
 
@@ -132,6 +133,9 @@ export const App: React.FC = () => {
     let cancelled = false;
     async function scan(withDelay: boolean) {
       setDeployScanError(null);
+      // Clear any cached repo->deployed-name resolutions so UI will re-resolve
+      // names against the fresh scan results.
+      clearResolutionCache();
       setDeployVersions({});
       if (!deploymentFolderPath) return;
       if (withDelay) await new Promise(res => setTimeout(res, 2000));
@@ -146,6 +150,8 @@ export const App: React.FC = () => {
         }
         const data = await r.json();
         if (!cancelled && data && data.versions) {
+          // Clear cached resolutions so the UI re-resolves deployed versions
+          clearResolutionCache();
           setDeployVersions(data.versions);
           console.log('[DEBUG] Deployed versions updated:', data.versions);
         }
