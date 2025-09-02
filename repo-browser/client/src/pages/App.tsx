@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { resolveDeployVersion } from '../lib/deployMapping';
-// @ts-ignore media asset handled by bundler
+// helper imports (resolveDeployVersion removed - unused)
+// @ts-expect-error media asset handled by bundler
 import copyVideo from '../video/Copy.mp4';
 import '../styles/buttons.css';
 import '../css/App.css';
@@ -20,14 +20,13 @@ export const App: React.FC = () => {
   const [repos, setRepos] = useState<string[]>([]);
   const [versions, setVersions] = useState<Record<string, string>>({});
   const [apiBase, setApiBase] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, _setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ignore, setIgnore] = useState<Set<string>>(new Set((ignoreDefaults as string[]).map(i => i.toLowerCase())));
+  const [ignore, _setIgnore] = useState<Set<string>>(new Set((ignoreDefaults as string[]).map(i => i.toLowerCase())));
   const [firstBasePath, setFirstBasePath] = useState<string | null>(null);
   const [firstBaseRepoNames, setFirstBaseRepoNames] = useState<Set<string>>(new Set());
-  const [secondBaseRepoNames, setSecondBaseRepoNames] = useState<Set<string>>(new Set());
-  const [secondBaseDebug, setSecondBaseDebug] = useState<any>(null);
-  const [secondBaseDebugError, setSecondBaseDebugError] = useState<string | null>(null);
+  const [secondBaseRepoNames, _setSecondBaseRepoNames] = useState<Set<string>>(new Set());
+  // second base debug snapshot removed (unused)
   const [deployVersions, setDeployVersions] = useState<Record<string, string>>({});
   const [deployScanError, setDeployScanError] = useState<string | null>(null);
   const [deploymentFolderPath, setDeploymentFolderPath] = useState<string>(DEFAULT_DEPLOY_PATH);
@@ -42,12 +41,11 @@ export const App: React.FC = () => {
   const [filterTargetVersions, setFilterTargetVersions] = useState<Record<string, string>>({});
   const [missingVersions, setMissingVersions] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [probing, setProbing] = useState(false);
-  const prevFilterSig = useRef('');
-  const [deploying, setDeploying] = useState(false);
+  const [_probing, setProbing] = useState(false);
+  // prevFilterSig and deploying removed (unused)
+  const _prevFilterSig = useRef<string | null>(null);
   const [deployRefreshKey, setDeployRefreshKey] = useState(0);
-  // Debug: store last /api/repos response
-  const [lastReposResponse, setLastReposResponse] = useState<any>(null);
+  // Debug response storage removed (unused)
 
   // Fetch repo list and versions when apiBase or firstBasePath changes
   useEffect(() => {
@@ -67,7 +65,6 @@ export const App: React.FC = () => {
         if (cancelled) return;
         // Log the full response for debugging
         console.log('[App] /api/repos raw response:', data);
-        setLastReposResponse(data); // Save for debug UI
         if (!data || typeof data !== 'object') {
           setError('[App] /api/repos: response is not an object');
           return;
@@ -82,8 +79,15 @@ export const App: React.FC = () => {
         setError(null);
         console.log('[App] repos:', data.repos);
         console.log('[App] versions:', data.versions || {});
-      } catch (e) {
-        setError(`[App] fetch error: ${e && (typeof e === 'object' && 'message' in e ? (e as any).message : String(e))}`);
+      } catch (e: unknown) {
+        let msg: string;
+        if (typeof e === 'object' && e !== null && 'message' in e) {
+          const m = (e as { message: unknown }).message;
+          msg = typeof m === 'string' ? m : String(m);
+        } else {
+          msg = String(e);
+        }
+        setError(`[App] fetch error: ${msg}`);
         console.error('[App] fetch error:', e);
       }
     })();
@@ -145,8 +149,15 @@ export const App: React.FC = () => {
           setDeployVersions(data.versions);
           console.log('[DEBUG] Deployed versions updated:', data.versions);
         }
-      } catch (e: any) {
-        if (!cancelled) setDeployScanError(e?.message || 'scan failed');
+      } catch (e: unknown) {
+        let msg: string;
+        if (typeof e === 'object' && e !== null && 'message' in e) {
+          const m = (e as { message: unknown }).message;
+          msg = typeof m === 'string' ? m : String(m);
+        } else {
+          msg = String(e);
+        }
+        if (!cancelled) setDeployScanError(msg || 'scan failed');
         console.log('[DEBUG] Deploy scan exception:', e);
       }
     }
@@ -161,7 +172,7 @@ export const App: React.FC = () => {
       scan(false);
     }
     return () => { cancelled = true; };
-  }, [deploymentFolderPath, apiBase, deploying, deployRefreshKey]);
+  }, [deploymentFolderPath, apiBase, deployRefreshKey]);
 
   // Poll server debug log endpoint when visible
   useEffect(() => {
@@ -536,8 +547,15 @@ export const App: React.FC = () => {
                                 setDeployRefreshKey(k => k + 1);
                               } catch {/* ignore */ }
                             }
-                          } catch (e: any) {
-                            setLogLines(prev => [...prev, `[start-versioning] error ${(e?.message) || e}`]);
+                          } catch (e: unknown) {
+                            let msg: string;
+                            if (typeof e === 'object' && e !== null && 'message' in e) {
+                              const m = (e as { message: unknown }).message;
+                              msg = typeof m === 'string' ? m : String(m);
+                            } else {
+                              msg = String(e);
+                            }
+                            setLogLines(prev => [...prev, `[start-versioning] error ${msg}`]);
                           }
                         }}
                       >Start Versioning</button>
