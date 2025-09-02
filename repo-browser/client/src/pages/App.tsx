@@ -3,6 +3,7 @@ import { resolveDeployVersion } from '../lib/deployMapping';
 // @ts-ignore media asset handled by bundler
 import copyVideo from '../video/Copy.mp4';
 import '../styles/buttons.css';
+import '../css/App.css';
 import { RepoList } from '../components/RepoList';
 import { ProgressList, RepoProgress } from '../components/ProgressList';
 import { Settings } from '../components/Settings';
@@ -282,28 +283,27 @@ export const App: React.FC = () => {
 
   return (
     <>
-      <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+      <header className="app-header">
         <div>
-          <h1 style={{ margin: '0 0 .25rem 0', color: 'goldenrod' }}>Local Repositories</h1>
-          <small style={{ opacity: 0.6, display: 'block' }}>
+          <h1 className="app-title">Local Repositories</h1>
+          <small className="app-small app-small-path">
             opt-soa Path: {SECOND_BASE}
           </small>
-          <small style={{ display: 'block' }}>
-            <span style={{ opacity: .55, marginRight: 4 }}>Repository Path:</span>
+          <small className="app-small">
+            <span className="app-label">Repository Path:</span>
             {firstBasePath ? (
               <a
                 href="#settings"
                 className="repo-path-link"
                 onClick={(e) => { e.preventDefault(); setShowSettings(true); }}
               >{firstBasePath}</a>
-            ) : <span style={{ opacity: .55 }}>Loading...</span>}
+            ) : <span className="app-small app-small-path">Loading...</span>}
           </small>
-          <small style={{ display: 'block' }}>
-            <span style={{ opacity: .55, marginRight: 4 }}>Deployment Folder Path:</span>
+          <small className="app-small">
+            <span className="app-label">Deployment Folder Path:</span>
             <span>{DEFAULT_DEPLOY_PATH}</span>
             <button
-              className="btn btn-outline btn-icon"
-              style={{ marginLeft: 8, fontSize: 12, padding: '2px 8px' }}
+              className="btn btn-outline btn-icon app-refresh-btn"
               title="Refresh deployed versions"
               onClick={() => setDeployRefreshKey(k => k + 1)}
             >🔄 Refresh</button>
@@ -319,36 +319,36 @@ export const App: React.FC = () => {
       </header>
       <main>
         {showHelpVideo && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }} onClick={() => setShowHelpVideo(false)}>
-            <div style={{ position: 'relative', background: '#0f1720', border: '1px solid #2d3642', borderRadius: 8, padding: 16, maxWidth: 960, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }} onClick={e => e.stopPropagation()}>
-              <button onClick={() => setShowHelpVideo(false)} style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }} aria-label="Close video">×</button>
-              <h3 style={{ margin: '0 0 .75rem 0', fontSize: 16, fontWeight: 500 }}>How to Copy & Paste Release List</h3>
-              <video src={copyVideo} controls autoPlay style={{ width: '100%', maxHeight: '70vh', borderRadius: 4, background: 'black' }} />
+          <div className="help-video-overlay" onClick={() => setShowHelpVideo(false)}>
+            <div className="help-video-modal" onClick={e => e.stopPropagation()}>
+              <button onClick={() => setShowHelpVideo(false)} className="help-video-close" aria-label="Close video">×</button>
+              <h3 className="help-video-title">How to Copy & Paste Release List</h3>
+              <video src={copyVideo} controls autoPlay className="help-video-player" />
             </div>
           </div>
         )}
         {showSettings ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem 0' }}>
+          <div className="settings-modal">
             <Settings onClose={() => setShowSettings(false)} onUpdated={() => setShowSettings(false)} />
           </div>
         ) : (
           <>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+            <div className="main-content-row">
               {/* Left Column (filter + repo list) */}
-              <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ fontSize: '.85rem', letterSpacing: '.3px', opacity: .85 }}>
-                  Filter by pasting repo names &amp; versions from <a href="https://www.trmc.osd.mil/wiki/pages/viewpage.action?spaceKey=MINERVA&title=AMPT+Releases" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>AMPT Latest Release</a>{' '}
+              <div className="main-content-left">
+                <div className="main-content-filter">
+                  Filter by pasting repo names &amp; versions from <a href="https://www.trmc.osd.mil/wiki/pages/viewpage.action?spaceKey=MINERVA&title=AMPT+Releases" target="_blank" rel="noopener noreferrer" className="release-link">AMPT Latest Release</a>{' '}
                   <button
                     type="button"
                     onClick={() => setShowHelpVideo(true)}
-                    style={{ background: 'transparent', border: 'none', color: '#93c5fd', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                    className="help-video-btn"
                     title="Play help video"
                   >(See video)</button>
                 </div>
                 {/* ...existing code... */}
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'stretch', flexWrap: 'nowrap' }}>
+                <div className="main-content-filter-row">
                   <textarea
-                    className="repo-textarea"
+                    className={"repo-textarea" + (missingVersions.length ? ' repo-textarea-error' : '')}
                     placeholder={"Paste repo list (will match names). Example:\nopt-log-summary\t2.15.0\nopt-ribbon\t4.8.0\nopt-gui\t4.14.0\nopt-plansmanager\t4.17.0\nonr-transit\t4.9.0 (deploy quarkus-app to: C:/OPT/quarkus-ots)\nopt-soa\t4.9.0"}
                     value={filter}
                     onChange={e => parseFilterInput(e.target.value)}
@@ -358,9 +358,8 @@ export const App: React.FC = () => {
                       if (txt) parseFilterInput(txt);
                     }}
                     rows={showLogs ? 18 : 10}
-                    style={{ flex: '1 1 380px', fontFamily: 'monospace', minHeight: showLogs ? 260 : 160, borderColor: missingVersions.length ? '#f87171' : undefined, background: '#0f1720' }}
                   />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '0 0 140px' }}>
+                  <div className="repo-textarea-btns">
                     <button
                       className="btn btn-secondary btn-full"
                       title="Paste clipboard text into filter"
@@ -376,38 +375,38 @@ export const App: React.FC = () => {
                     <button className="btn btn-secondary btn-full" onClick={() => setAll(false)}>Clear</button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', fontSize: 11, lineHeight: 1.2, marginTop: 8 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 10, height: 10, background: '#c084fc', borderRadius: 2 }} />
+                <div className="repo-legend-row">
+                  <span className="repo-legend-item">
+                    <span className="repo-legend-dot deployed-version" />
                     <span>Deployed version (.war)</span>
                   </span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 10, height: 10, background: '#60a5fa', borderRadius: 2 }} />
+                  <span className="repo-legend-item">
+                    <span className="repo-legend-dot repo-version" />
                     <span>Repo version (fallback)</span>
                   </span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 10, height: 10, background: '#34d399', borderRadius: 2 }} />
+                  <span className="repo-legend-item">
+                    <span className="repo-legend-dot target-version" />
                     <span>Target upgrade version</span>
                   </span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 10, height: 10, background: 'salmon', borderRadius: 2 }} />
+                  <span className="repo-legend-item">
+                    <span className="repo-legend-dot no-upgrade" />
                     <span>No upgrade (equal/older)</span>
                   </span>
                 </div>
                 {missingVersions.length > 0 && (
-                  <div style={{ color: '#f87171', fontSize: 12 }}>
+                  <div className="repo-missing-versions">
                     {missingVersions.length === 1 ? 'Line missing version:' : 'Lines missing versions:'} {missingVersions.slice(0, 5).join(', ')}{missingVersions.length > 5 ? '…' : ''}
                   </div>
                 )}
                 {loading && <p>Loading...</p>}
-                {error && <p style={{ color: '#ff7272' }}>Error: {error}</p>}
+                {error && <p className="repo-error">Error: {error}</p>}
                 {!loading && !error && (
-                  <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative', paddingBottom: '3rem' }}>
+                  <div className="repo-progress-list">
                     <ProgressList progress={progress} repoLogs={repoLogs} />
                     <RepoList repos={filtered} selected={selected} toggle={toggle} versions={versions} targetVersions={filterTargetVersions} deployVersions={deployVersions} showBothVersions />
                     {/* ...existing code... */}
-                    {deployScanError && <div style={{ position: 'absolute', left: 0, bottom: 0, fontSize: 11, color: '#f87171' }}>Deploy scan error: {deployScanError}</div>}
-                    <div style={{ position: 'absolute', right: 0, bottom: 0 }}>
+                    {deployScanError && <div className="repo-deploy-error">Deploy scan error: {deployScanError}</div>}
+                    <div className="repo-versioning-btns">
                       <button
                         className="btn btn-secondary"
                         disabled={selected.size === 0}
@@ -548,10 +547,10 @@ export const App: React.FC = () => {
               </div>
               {/* Right Column (logs) */}
               {showLogs && (
-                <div style={{ width: '30%', flex: '0 0 30%', minWidth: 320, display: 'flex', flexDirection: 'column', maxHeight: 640 }}>
-                  <h3 style={{ margin: '0 0 .5rem 0' }}>Server Debug Log</h3>
-                  <div style={{ background: '#0f1720', border: '1px solid #2d3642', padding: 8, fontFamily: 'monospace', fontSize: 12, overflowY: 'auto', whiteSpace: 'pre-wrap', flex: 1, minHeight: 0 }}>
-                    {logLines.length === 0 ? <div style={{ opacity: .5 }}>No log lines yet.</div> : logLines.slice(-500).map((l, i) => <div key={i}>{l}</div>)}
+                <div className="server-debug-log-panel">
+                  <h3 className="server-debug-log-title">Server Debug Log</h3>
+                  <div className="server-debug-log-content">
+                    {logLines.length === 0 ? <div className="server-debug-log-empty">No log lines yet.</div> : logLines.slice(-500).map((l, i) => <div key={i}>{l}</div>)}
                   </div>
                   {/* Second Base Snapshot panel removed */}
                 </div>
