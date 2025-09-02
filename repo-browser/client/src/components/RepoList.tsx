@@ -11,7 +11,7 @@ export const RepoList: React.FC<{
   showBothVersions?: boolean;
 }> = ({ repos, selected, toggle, versions, targetVersions, deployVersions, showBothVersions }) => {
   if (repos.length === 0) return <p style={{ opacity: 0.7 }}>No repos</p>;
-  const cmp = (a: string, b: string) => {
+  const _cmp = (a: string, b: string) => {
     const pa = a.split('.').map(n => parseInt(n, 10) || 0);
     const pb = b.split('.').map(n => parseInt(n, 10) || 0);
     for (let i = 0; i < 3; i++) {
@@ -30,7 +30,7 @@ export const RepoList: React.FC<{
         const repoVersion = versions && (versions[r] || versions[r.toLowerCase()]);
         // ...
         const tv = targetVersions && targetVersions[r];
-        let showVersion = dv || repoVersion;
+        const showVersion = dv || repoVersion;
         let showVersionColor = '#c084fc'; // deployed (purple)
         if (!dv && repoVersion) showVersionColor = '#60a5fa'; // fallback repo version (blue)
         // ...

@@ -22,9 +22,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, onUpdated }) => {
   // Removed dirty tracking since Save button eliminated.
   const [loadingFolders, setLoadingFolders] = useState(false);
   // Removed applyingFirst state (Apply button removed)
-  const [secondBaseChildren, setSecondBaseChildren] = useState<string[] | null>(null);
-  const [secondBaseLoading, setSecondBaseLoading] = useState(false);
-  const [secondBaseError, setSecondBaseError] = useState<string | null>(null);
+  const [_secondBaseChildren, setSecondBaseChildren] = useState<string[] | null>(null);
+  const [_secondBaseLoading, setSecondBaseLoading] = useState(false);
+  const [_secondBaseError, setSecondBaseError] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -146,7 +146,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, onUpdated }) => {
 
   // applyFirstPath removed (Apply button gone). Save now commits changes.
 
-  function toggleIgnore(folder: string) {
+  function _toggleIgnore(folder: string) {
     if (!selectedBase) return;
     // Changes persist only when Save is pressed.
     setIgnoreMap(prev => {

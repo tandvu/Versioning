@@ -62,7 +62,7 @@ export async function clearSavedHandle() {
 
 export async function ensurePersistentStorage() {
   if ((navigator as any).storage && (navigator as any).storage.persist) {
-    try { await (navigator as any).storage.persist(); } catch { }
+    try { await (navigator as any).storage.persist(); } catch (_err) { /* ignore */ }
   }
 }
 
@@ -88,7 +88,7 @@ export async function verifyPermission(handle: any, mode: 'read' | 'readwrite' =
       return r === 'granted';
     }
     return false;
-  } catch {
+  } catch (_err) {
     return false;
   }
 }
