@@ -1,3 +1,14 @@
+# Node & editor
+node_modules/
+.vscode/
+
+# Build artifacts
+standalone/server/dist/
+build/*.zip
+build/*.exe
+
+# Vite / client build
+client/dist/
 # Ignore node_modules and package CSS
 node_modules/
 node_modules/repo-browser-client/src/css/
