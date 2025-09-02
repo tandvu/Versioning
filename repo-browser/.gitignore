@@ -1,3 +1,4 @@
 # Ignore node_modules and package CSS
 node_modules/
 node_modules/repo-browser-client/src/css/
+client/dist/
