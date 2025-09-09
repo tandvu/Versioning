@@ -105,23 +105,38 @@ function listGitReposUnder(baseDir: string): string[] {
 }
 
 function detectVersion(repoPath: string): string | undefined {
-  const baseName = path.basename(repoPath).toLowerCase();
-  // Special case: opt-soa => read SOA/pom.xml <parent><version>
-  if (baseName === 'opt-soa') {
-    try {
-      const pomPath = path.join(repoPath, 'SOA', 'pom.xml');
-      if (fs.existsSync(pomPath)) {
-        const xml = fs.readFileSync(pomPath, 'utf8');
-        // Capture version inside <parent> ... <version> ... </parent>
-        const match = xml.match(/<parent>[\s\S]*?<version>([^<]+)<\/version>[\s\S]*?<\/parent>/i);
-        if (match) {
-          const v = match[1].trim();
-          if (v) return v;
+  // Look for .war files in target folder, keep only the latest version, remove the rest
+  let targetDir = path.join(repoPath, 'target');
+  if (path.basename(repoPath).toLowerCase() === 'opt-soa') {
+    targetDir = path.join(repoPath, 'SOA', 'target');
+  }
+  if (fs.existsSync(targetDir) && fs.statSync(targetDir).isDirectory()) {
+    const warFiles = fs.readdirSync(targetDir).filter(f => f.endsWith('.war'));
+    if (warFiles.length > 0) {
+      // Extract version from filename: name-version.war
+      const versionPattern = /^(.*)-(\d+\.\d+\.\d+)(?:[^\d].*)?\.war$/;
+      let latestWar = null;
+      let latestVersion = null;
+      for (const war of warFiles) {
+        const m = war.match(versionPattern);
+        if (m) {
+          const ver = m[2];
+          if (!latestVersion || compareVersions(ver, latestVersion) > 0) {
+            latestVersion = ver;
+            latestWar = war;
+          }
         }
       }
-    } catch { /* ignore */ }
+      // Remove older .war files
+      for (const war of warFiles) {
+        if (war !== latestWar) {
+          try { fs.unlinkSync(path.join(targetDir, war)); } catch { /* ignore */ }
+        }
+      }
+      return latestVersion || undefined;
+    }
   }
-  // Fallback: package.json version
+  // Fallback: package.json version (if no .war found)
   try {
     const pkgFile = path.join(repoPath, 'package.json');
     if (fs.existsSync(pkgFile)) {
@@ -131,6 +146,18 @@ function detectVersion(repoPath: string): string | undefined {
     }
   } catch { /* ignore */ }
   return undefined;
+
+  // Helper to compare version strings like 4.12.0 and 4.14.0
+  function compareVersions(a: string, b: string): number {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const na = pa[i] || 0, nb = pb[i] || 0;
+      if (na > nb) return 1;
+      if (na < nb) return -1;
+    }
+    return 0;
+  }
 }
 
 // JSON parsing only for settings update route to avoid unnecessary overhead elsewhere.
