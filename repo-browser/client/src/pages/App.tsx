@@ -9,7 +9,7 @@ import { ProgressList, RepoProgress } from '../components/ProgressList';
 import { Settings } from '../components/Settings';
 import { detectApiBase } from '../api';
 import ignoreDefaults from '../IgnoreFolders.json';
-import { clearResolutionCache } from '../lib/deployMapping';
+import { clearResolutionCache, resolveDeployVersion } from '../lib/deployMapping';
 // Simple polling log viewer for server debug lines
 // Removed client File System Access handling; using server-managed base paths only.
 
@@ -278,7 +278,18 @@ export const App: React.FC = () => {
         if (ignore.has(low) && firstBaseRepoNames.has(low)) return false;
         return setLower.has(low);
       });
-      setSelected(new Set(filteredRepos));
+      // Custom selection logic: checked if deployed version != target upgrade version
+      const newSelected = new Set<string>();
+      // Use resolveDeployVersion for deployed version comparison
+      // Import at top: import { resolveDeployVersion } from '../lib/deployMapping';
+      for (const repo of filteredRepos) {
+        const targetVer = targetVersions[repo] || targetVersions[repo.toLowerCase()];
+        const deployedVer = resolveDeployVersion(repo, deployVersions);
+        if (!targetVer || !deployedVer || deployedVer !== targetVer) {
+          newSelected.add(repo);
+        }
+      }
+      setSelected(newSelected);
     } else {
       setFilterNames(null);
       setFilterTargetVersions({});
