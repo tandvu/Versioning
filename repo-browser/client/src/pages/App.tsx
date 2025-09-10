@@ -482,7 +482,8 @@ export const App: React.FC = () => {
                 {error && <p className="repo-error">Error: {error}</p>}
                 {!loading && !error && (
                   <div className="repo-progress-list">
-                    {(progress.length > 0) && (
+                    {/* Always show progress if there are steps in progress */}
+                    {progress.length > 0 && (
                       <ProgressList progress={progress} repoLogs={repoLogs} />
                     )}
                     <RepoList
@@ -538,7 +539,11 @@ export const App: React.FC = () => {
                                     setProgress(prev => prev.map(p => {
                                       if (p.repo !== data.repo) return p;
                                       const steps = p.steps.map(s => {
-                                        if (s.label === data.step) {
+                                        // Accept both 'Deploy WAR' and 'Deploy WAR(s)' as valid step labels
+                                        const stepMatch = (s.label === data.step) ||
+                                          (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') ||
+                                          (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR');
+                                        if (stepMatch) {
                                           return {
                                             ...s,
                                             status: data.status || s.status,
@@ -577,14 +582,12 @@ export const App: React.FC = () => {
                                         const newPart = data.stdout.slice(prevStdout.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => {
-                                        const merged = [...prev, ...newLines];
-                                        // Deduplicate consecutive identical lines & cap size
-                                        const filtered: string[] = [];
-                                        for (const line of merged) {
-                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
-                                        }
-                                        return filtered.slice(-500);
+                                      setLogLines(prev => [...prev, ...newLines]);
+                                      setRepoLogs(prev => {
+                                        const r = { ...prev };
+                                        if (!r[data.repo]) r[data.repo] = [];
+                                        r[data.repo] = [...r[data.repo], ...newLines];
+                                        return r;
                                       });
                                     }
                                     if (data.stderr) {
@@ -600,38 +603,32 @@ export const App: React.FC = () => {
                                         const newPart = data.stderr.slice(prevStderr.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => {
-                                        const merged = [...prev, ...newLines];
-                                        // Deduplicate consecutive identical lines & cap size
-                                        const filtered: string[] = [];
-                                        for (const line of merged) {
-                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
-                                        }
-                                        return filtered.slice(-500);
+                                      setLogLines(prev => [...prev, ...newLines]);
+                                      setRepoLogs(prev => {
+                                        const r = { ...prev };
+                                        if (!r[data.repo]) r[data.repo] = [];
+                                        r[data.repo] = [...r[data.repo], ...newLines];
+                                        return r;
                                       });
                                     }
                                   } catch (e) {
-                                    console.error('[DEBUG] SSE message parsing error:', e);
+                                    console.error('[DEBUG] Error parsing SSE data:', e);
                                   }
                                 };
-                                // Auto-close event source on route change or unmount
-                                const handleVisibilityChange = () => {
-                                  if (document.hidden) {
-                                    stopped = true;
-                                    eventSource.close();
-                                  }
+                                eventSource.onerror = (err) => {
+                                  console.error('[DEBUG] SSE error:', err);
+                                  stopped = true;
                                 };
-                                document.addEventListener('visibilitychange', handleVisibilityChange);
-                                return () => {
+                                // Stop SSE on unmount or when versioning completes
+                                setTimeout(() => {
                                   stopped = true;
                                   eventSource.close();
-                                  document.removeEventListener('visibilitychange', handleVisibilityChange);
-                                };
+                                }, 30000); // auto-stop after 30 seconds
                               } catch (e) {
-                                console.error('[DEBUG] Versioning button error:', e);
+                                console.error('[DEBUG] Versioning start error:', e);
                               }
                             }}
-                          >Versioning</button>
+                          >Start Versioning</button>
                         </Tooltip>
                         <Tooltip
                           content={'Build & Deploy\n\nBuilds and deploys selected repos without changing branches.\nUse this for quick redeploys or hotfixes.'}
@@ -645,7 +642,7 @@ export const App: React.FC = () => {
                                 const base = apiBase || await detectApiBase();
                                 const chosen = Array.from(selected);
                                 if (!chosen.length) return;
-                                // Initialize progress state and clear per-repo logs
+                                // Initialize progress state and clear per-repo logs BEFORE backend request
                                 setProgress(chosen.map(repo => ({
                                   repo,
                                   steps: [
@@ -653,13 +650,19 @@ export const App: React.FC = () => {
                                     { label: 'Deploy WAR', status: 'pending' },
                                   ]
                                 })));
-                                setRepoLogs({});
-                                // Start SSE for real-time progress
+                                // Pre-mark first step as running and seed log so UI shows immediately
+                                setProgress(prev => prev.map(p => p.repo && chosen.includes(p.repo) ? {
+                                  ...p,
+                                  steps: p.steps.map(s => s.label === 'Build' ? { ...s, status: 'running' } : s)
+                                } : p));
+                                setRepoLogs(Object.fromEntries(chosen.map(r => [r, ['Starting build...']])));
+                                // Start SSE for real-time progress (before triggering backend)
                                 let stopped = false;
-                                const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
+                                const eventSource = new window.EventSource(`${base}/api/versioning/progress?mode=build-deploy`);
                                 eventSource.onmessage = (event) => {
                                   try {
                                     const data = JSON.parse(event.data);
+                                    console.log('[DEBUG] Build & Deploy SSE event:', data);
                                     if (!data || !data.repo || !data.step) return;
                                     setProgress(prev => prev.map(p => {
                                       if (p.repo !== data.repo) return p;
@@ -694,7 +697,7 @@ export const App: React.FC = () => {
                                       let prevStdout = '';
                                       setProgress(prev => {
                                         const p = prev.find(x => x.repo === data.repo);
-                                        const prevStep = p?.steps.find(s => s.label === data.step);
+                                        const prevStep = p?.steps.find(s => s.label === data.step || (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') || (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR'));
                                         prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
                                         return prev;
                                       });
@@ -703,21 +706,19 @@ export const App: React.FC = () => {
                                         const newPart = data.stdout.slice(prevStdout.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => {
-                                        const merged = [...prev, ...newLines];
-                                        // Deduplicate consecutive identical lines & cap size
-                                        const filtered: string[] = [];
-                                        for (const line of merged) {
-                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
-                                        }
-                                        return filtered.slice(-500);
+                                      setLogLines(prev => [...prev, ...newLines]);
+                                      setRepoLogs(prev => {
+                                        const r = { ...prev };
+                                        if (!r[data.repo]) r[data.repo] = [];
+                                        r[data.repo] = [...r[data.repo], ...newLines];
+                                        return r;
                                       });
                                     }
                                     if (data.stderr) {
                                       let prevStderr = '';
                                       setProgress(prev => {
                                         const p = prev.find(x => x.repo === data.repo);
-                                        const prevStep = p?.steps.find(s => s.label === data.step);
+                                        const prevStep = p?.steps.find(s => s.label === data.step || (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') || (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR'));
                                         prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
                                         return prev;
                                       });
@@ -726,35 +727,35 @@ export const App: React.FC = () => {
                                         const newPart = data.stderr.slice(prevStderr.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => {
-                                        const merged = [...prev, ...newLines];
-                                        // Deduplicate consecutive identical lines & cap size
-                                        const filtered: string[] = [];
-                                        for (const line of merged) {
-                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
-                                        }
-                                        return filtered.slice(-500);
+                                      setLogLines(prev => [...prev, ...newLines]);
+                                      setRepoLogs(prev => {
+                                        const r = { ...prev };
+                                        if (!r[data.repo]) r[data.repo] = [];
+                                        r[data.repo] = [...r[data.repo], ...newLines];
+                                        return r;
                                       });
                                     }
                                   } catch (e) {
-                                    console.error('[DEBUG] SSE message parsing error:', e);
+                                    console.error('[DEBUG] Error parsing SSE data:', e);
                                   }
                                 };
-                                // Auto-close event source on route change or unmount
-                                const handleVisibilityChange = () => {
-                                  if (document.hidden) {
-                                    stopped = true;
-                                    eventSource.close();
-                                  }
+                                eventSource.onerror = (err) => {
+                                  console.error('[DEBUG] SSE error:', err);
+                                  stopped = true;
                                 };
-                                document.addEventListener('visibilitychange', handleVisibilityChange);
-                                return () => {
+                                // Stop SSE after a longer window to allow build to finish
+                                setTimeout(() => {
                                   stopped = true;
                                   eventSource.close();
-                                  document.removeEventListener('visibilitychange', handleVisibilityChange);
-                                };
+                                }, 600000); // auto-stop after 10 minutes
+                                // Trigger backend build & deploy (fire-and-forget)
+                                fetch(`${base}/api/versioning/build-deploy`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ repos: chosen, deployPath: deploymentFolderPath }),
+                                }).catch(err => console.error('[DEBUG] build-deploy request error:', err));
                               } catch (e) {
-                                console.error('[DEBUG] Build & Deploy button error:', e);
+                                console.error('[DEBUG] Versioning start error:', e);
                               }
                             }}
                           >Build & Deploy</button>
@@ -763,8 +764,8 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                 )}
-              </div>
-            </div>
+              </div> {/* main-content-left */}
+            </div> {/* main-content-row */}
           </>
         )}
       </main>

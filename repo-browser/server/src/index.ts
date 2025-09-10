@@ -1,4 +1,15 @@
 // --- SSE Progress Tracking ---
+// Helper to compare version strings like 4.12.0 and 4.14.0
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0, nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
 // ...existing code...
 import express, { Request, Response } from 'express';
 import cors from 'cors';
@@ -11,6 +22,11 @@ import { config, getConfig, updateConfig, RepoConfig } from './config.js';
 
 const app = express();
 app.use(cors());
+
+// Small helper to pause between narrated SSE messages
+function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
+// Slight global slow-down factor for narrated deploy messages
+const NARRATION_SLOW_FACTOR = 1.25; // "just a tad" slower
 
 // --- SSE Progress Tracking ---
 const sseClients: Response[] = [];
@@ -545,6 +561,166 @@ app.get('/api/deploy/versions', (req: Request, res: Response) => {
 });
 
 // Start Versioning: checkout master branch for provided repos
+// Build & Deploy: build and deploy selected repos without branch checkout
+app.post('/api/versioning/build-deploy', express.json(), async (req: Request, res: Response) => {
+  pushDebug(`[build-deploy] process.env.PATH: ${process.env.PATH}`);
+  const body = req.body || {};
+  const repos: string[] = Array.isArray(body.repos) ? body.repos.filter((r: any) => typeof r === 'string' && r.trim()) : [];
+  const deployFolder = body.deployPath || 'C:/OPT/jboss-eap-8.0.5/standalone/deployments';
+  pushDebug(`[build-deploy] endpoint called with repos: ${JSON.stringify(repos)}, deployPath: ${deployFolder}`);
+  if (repos.length === 0) return res.status(400).json({ error: 'No repos provided' });
+  const results: any[] = [];
+  for (const repo of repos) {
+    let repoDir: string | null = null;
+    for (const base of config.basePaths) {
+      const candidate = path.join(base, repo);
+      if (fs.existsSync(candidate) && hasGitRepo(candidate)) { repoDir = candidate; break; }
+    }
+    if (!repoDir) {
+      const msg = 'not found or not a git repo';
+      results.push({ repo, ok: false, error: msg });
+      pushDebug(`[build-deploy] ${repo}: ${msg}`);
+      continue;
+    }
+    const steps: any[] = [];
+    let buildOk = false;
+    let warPath = null;
+    let deployOk = false;
+    let deployError = null;
+    try {
+      // Build step
+      let buildCmd: string;
+      let buildArgs: string[];
+      let buildCwd: string = repoDir;
+      if (repo.toLowerCase() === 'opt-soa') {
+        buildCwd = path.join(repoDir, 'SOA');
+        sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ mvn clean install` });
+        buildCmd = process.platform === 'win32' ? 'mvn.cmd' : 'mvn';
+        buildArgs = ['clean', 'install'];
+      } else {
+        sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ npm run build` });
+        // Use full path to npm.cmd for Windows
+        buildCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npm.cmd' : 'npm';
+        buildArgs = ['run', 'build'];
+      }
+      const child = spawn(buildCmd, buildArgs, { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      // Stream live logs via SSE while build runs
+      child.stdout.on('data', d => {
+        stdout += d.toString();
+        sendSseEvent({ repo, step: 'Build', status: 'running', stdout });
+      });
+      child.stderr.on('data', d => {
+        stderr += d.toString();
+        sendSseEvent({ repo, step: 'Build', status: 'running', stderr });
+      });
+      const buildResult = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+        child.on('close', code => resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() }));
+        child.on('error', err => resolve({ code: -1, stdout, stderr: String(err) }));
+      });
+      pushDebug(`[build-deploy] ${repo}: build exit code=${buildResult.code}`);
+      if (buildResult.stdout) pushDebug(`[build-deploy] ${repo}: build stdout=\n${buildResult.stdout}`);
+      if (buildResult.stderr) pushDebug(`[build-deploy] ${repo}: build stderr=\n${buildResult.stderr}`);
+      steps.push({ cmd: `${buildCmd} ${buildArgs.join(' ')}`, code: buildResult.code, stdout: buildResult.stdout, stderr: buildResult.stderr });
+      buildOk = buildResult.code === 0;
+      sendSseEvent({ repo, step: 'Build', status: buildOk ? 'success' : 'error', stdout: buildResult.stdout, stderr: buildResult.stderr });
+      // Find WAR file
+      let warCandidates: string[] = [];
+      if (buildOk) {
+        let warDir: string | undefined;
+        if (repo.toLowerCase() === 'opt-soa') {
+          warDir = path.join(repoDir, 'SOA', 'target');
+        } else {
+          warDir = path.join(repoDir, 'target');
+        }
+        if (warDir && fs.existsSync(warDir)) {
+          const allWars = fs.readdirSync(warDir).filter(f => f.endsWith('.war'));
+          if (allWars.length > 0) {
+            // Only deploy the latest WAR by version for the repo
+            const versionPattern = /^(.*)-(\d+\.\d+\.\d+)(?:[^\d].*)?\.war$/;
+            let latestWar: string | undefined;
+            let latestVersion: string | undefined;
+            for (const war of allWars) {
+              const m = war.match(versionPattern);
+              if (m) {
+                const [, base, ver] = m;
+                if (!latestVersion || compareVersions(ver, latestVersion) > 0) {
+                  latestVersion = ver;
+                  latestWar = war;
+                }
+              }
+            }
+            if (latestWar) {
+              warCandidates = [path.join(warDir, latestWar)];
+            }
+          }
+        }
+      }
+      if (!buildOk) {
+        pushDebug(`[build-deploy] ${repo}: build failed, skipping deploy step.`);
+      }
+      if (warCandidates.length > 0) {
+        sendSseEvent({ repo, step: 'Build', status: 'success', warPath: warCandidates.join(', ') });
+      }
+      // Deploy WAR file with narrated, gradual SSE messages
+      {
+        let deployStdout = '';
+        const say = async (line: string, pauseMs = 500) => {
+          deployStdout += (deployStdout ? '\n' : '') + line;
+          sendSseEvent({ repo, step: 'Deploy WAR', status: 'running', stdout: deployStdout });
+          if (pauseMs > 0) await sleep(Math.round(pauseMs * NARRATION_SLOW_FACTOR));
+        };
+        await say(`Preparing to deploy WAR to ${deployFolder}...`, 700);
+        let deployedCount = 0;
+        if (buildOk && warCandidates.length > 0) {
+          const firstWar = warCandidates[0];
+          const destName = path.basename(firstWar);
+          const baseName = destName.replace(/-\d+\.\d+\.\d+.*\.war$/i, '');
+          await say(`Scanning for existing ${baseName}-*.war in deployment folder...`, 500);
+          const existingWars = fs.existsSync(deployFolder) ? fs.readdirSync(deployFolder).filter(f => f.startsWith(baseName) && f.endsWith('.war')) : [];
+          await say(existingWars.length ? `Found ${existingWars.length} previous version(s): ${existingWars.join(', ')}` : 'No previous versions found.', 400);
+          for (const oldWar of existingWars) {
+            await say(`Deleting ${oldWar}...`, 200);
+            try { fs.unlinkSync(path.join(deployFolder, oldWar)); await say(`Deleted ${oldWar}.`, 150); }
+            catch (e) { deployError = String(e); await say(`Failed to delete ${oldWar}: ${deployError}`, 0); }
+          }
+          for (const war of warCandidates) {
+            if (!fs.existsSync(war)) { await say(`WAR not found: ${war}`, 0); continue; }
+            const dest = path.join(deployFolder, path.basename(war));
+            await say(`Copying ${path.basename(war)} to deployment folder...`, 400);
+            try { fs.copyFileSync(war, dest); deployedCount++; await say(`Copied to ${dest}.`, 300); }
+            catch (e) { deployError = String(e); await say(`Copy failed: ${deployError}`, 0); }
+          }
+          await say('Finalizing deployment...', 600);
+          deployOk = deployedCount === warCandidates.length;
+          warPath = warCandidates.join(', ');
+          // Extra pause to keep the step visible a little longer
+          await sleep(Math.round(800 * NARRATION_SLOW_FACTOR));
+          sendSseEvent({ repo, step: 'Deploy WAR', status: deployOk ? 'success' : 'error', warPath, detail: deployError, stdout: deployStdout });
+        } else {
+          await say('No WARs to deploy.', 600);
+          sendSseEvent({ repo, step: 'Deploy WAR', status: 'error', detail: 'No WARs to deploy', stdout: deployStdout });
+          if (!buildOk) {
+            pushDebug(`[build-deploy] ${repo}: no WARs to deploy because build failed.`);
+          } else {
+            pushDebug(`[build-deploy] ${repo}: no WARs found to deploy after build.`);
+          }
+        }
+      }
+      const ok = steps.every(s => s.code === 0) && buildOk && deployOk;
+      const combinedStdout = steps.map(s => `# ${s.cmd}\n${s.stdout || ''}`).filter(Boolean).join('\n');
+      const combinedStderr = steps.map(s => s.stderr && `# ${s.cmd}\n${s.stderr || ''}`).filter(Boolean).join('\n');
+      results.push({ repo, ok, steps, stdout: combinedStdout, stderr: combinedStderr, buildOk, warPath, deployOk, deployError });
+      pushDebug(`[build-deploy] ${repo}: ok=${ok} buildOk=${buildOk} deployOk=${deployOk}`);
+    } catch (e: any) {
+      const errMsg = e?.message || 'unknown error';
+      results.push({ repo, ok: false, error: errMsg, steps, buildOk, warPath, deployOk, deployError });
+      pushDebug(`[build-deploy] ${repo}: exception ${errMsg}`);
+    }
+  }
+  res.json({ results });
+});
 app.post('/api/versioning/start', express.json(), async (req: Request, res: Response) => {
   const body = req.body || {};
   const repos: string[] = Array.isArray(body.repos) ? body.repos.filter((r: any) => typeof r === 'string' && r.trim()) : [];
@@ -713,43 +889,44 @@ app.post('/api/versioning/start', express.json(), async (req: Request, res: Resp
         return 0;
       }
 
-      // Deploy WAR file
-      sendSseEvent({
-        repo,
-        step: 'Deploy WAR',
-        status: 'running',
-        stdout: [
-          `Preparing to deploy WAR to ${deployFolder}...`,
-          `- Removing any previously deployed versions matching the base name.`,
-          `- Copying new WAR from target folder to deployment folder.`,
-          `- WAR to deploy: ${warCandidates.map(w => path.basename(w)).join(', ') || 'None found'}`
-        ].join('\n')
-      });
-      let deployedCount = 0;
-      if (buildOk && warCandidates.length > 0) {
-        for (const war of warCandidates) {
-          if (fs.existsSync(war)) {
-            const destName = path.basename(war);
-            const destPath = path.join(deployFolder, destName);
-            const baseName = destName.replace(/-\d+\.\d+\.\d+.*\.war$/i, '');
-            try {
-              // Delete all previous versions for this repo (e.g., opt-gui-*.war)
-              const existingWars = fs.readdirSync(deployFolder).filter(f => f.startsWith(baseName) && f.endsWith('.war'));
-              for (const oldWar of existingWars) {
-                fs.unlinkSync(path.join(deployFolder, oldWar));
-              }
-              fs.copyFileSync(war, destPath);
-              deployedCount++;
-            } catch (e) {
-              deployError = String(e);
-            }
+      // Deploy WAR file with narrated, gradual SSE messages (same UX as build-deploy)
+      {
+        let deployStdout = '';
+        const say = async (line: string, pauseMs = 500) => {
+          deployStdout += (deployStdout ? '\n' : '') + line;
+          sendSseEvent({ repo, step: 'Deploy WAR', status: 'running', stdout: deployStdout });
+          if (pauseMs > 0) await sleep(Math.round(pauseMs * NARRATION_SLOW_FACTOR));
+        };
+        await say(`Preparing to deploy WAR to ${deployFolder}...`, 700);
+        let deployedCount = 0;
+        if (buildOk && warCandidates.length > 0) {
+          const firstWar = warCandidates[0];
+          const destName = path.basename(firstWar);
+          const baseName = destName.replace(/-\d+\.\d+\.\d+.*\.war$/i, '');
+          await say(`Scanning for existing ${baseName}-*.war in deployment folder...`, 500);
+          const existingWars = fs.existsSync(deployFolder) ? fs.readdirSync(deployFolder).filter(f => f.startsWith(baseName) && f.endsWith('.war')) : [];
+          await say(existingWars.length ? `Found ${existingWars.length} previous version(s): ${existingWars.join(', ')}` : 'No previous versions found.', 400);
+          for (const oldWar of existingWars) {
+            await say(`Deleting ${oldWar}...`, 200);
+            try { fs.unlinkSync(path.join(deployFolder, oldWar)); await say(`Deleted ${oldWar}.`, 150); }
+            catch (e) { deployError = String(e); await say(`Failed to delete ${oldWar}: ${deployError}`, 0); }
           }
+          for (const war of warCandidates) {
+            if (!fs.existsSync(war)) { await say(`WAR not found: ${war}`, 0); continue; }
+            const dest = path.join(deployFolder, path.basename(war));
+            await say(`Copying ${path.basename(war)} to deployment folder...`, 400);
+            try { fs.copyFileSync(war, dest); deployedCount++; await say(`Copied to ${dest}.`, 300); }
+            catch (e) { deployError = String(e); await say(`Copy failed: ${deployError}`, 0); }
+          }
+          await say('Finalizing deployment...', 600);
+          deployOk = deployedCount === warCandidates.length;
+          warPath = warCandidates.join(', ');
+          await sleep(Math.round(800 * NARRATION_SLOW_FACTOR));
+          sendSseEvent({ repo, step: 'Deploy WAR', status: deployOk ? 'success' : 'error', warPath, detail: deployError, stdout: deployStdout });
+        } else {
+          await say('No WARs to deploy.', 600);
+          sendSseEvent({ repo, step: 'Deploy WAR', status: 'error', detail: 'No WARs to deploy', stdout: deployStdout });
         }
-        deployOk = deployedCount === warCandidates.length;
-        warPath = warCandidates.join(', ');
-        sendSseEvent({ repo, step: 'Deploy WAR', status: deployOk ? 'success' : 'error', warPath, detail: deployError });
-      } else {
-        sendSseEvent({ repo, step: 'Deploy WAR', status: 'error', detail: 'No WARs to deploy' });
       }
 
       const ok = steps.every(s => s.code === 0) && buildOk && deployOk;
