@@ -466,7 +466,7 @@ export const App: React.FC = () => {
                     <span>No upgrade (equal/older)</span>
                   </span>
                   <label style={{ marginLeft: '1.5rem', fontWeight: 500 }}>
-                    <input type="checkbox" checked={showBranchNames} onChange={e => setShowBranchNames(e.target.checked)} /> Display Current Branch in Repo
+                    <input type="checkbox" checked={showBranchNames} onChange={e => setShowBranchNames(e.target.checked)} /> Display Current Branch in Local Repo
                   </label>
                 </div>
                 {missingVersions.length > 0 && (
