@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-// helper imports (resolveDeployVersion removed - unused)
+// helper imports (resolveDeployVersion removed -unused)
 // @ts-expect-error media asset handled by bundler
 import copyVideo from '../video/Copy.mp4';
 import { Tooltip } from '../components/Tooltip';
@@ -323,6 +323,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (!apiBase || !firstBasePath || repos.length === 0) return;
     let cancelled = false;
+    let stopped = false;
     (async () => {
       try {
         // Fetch branch names for first base
@@ -353,7 +354,7 @@ export const App: React.FC = () => {
         console.log('[DEBUG] Error fetching branchNames for base', firstBasePath, e);
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; stopped = true; };
   }, [apiBase, firstBasePath, repos]);
 
   return (
@@ -481,7 +482,9 @@ export const App: React.FC = () => {
                 {error && <p className="repo-error">Error: {error}</p>}
                 {!loading && !error && (
                   <div className="repo-progress-list">
-                    <ProgressList progress={progress} repoLogs={repoLogs} />
+                    {(progress.length > 0) && (
+                      <ProgressList progress={progress} repoLogs={repoLogs} />
+                    )}
                     <RepoList
                       repos={filtered}
                       selected={selected}
@@ -526,6 +529,7 @@ export const App: React.FC = () => {
                                 })));
                                 setRepoLogs({});
                                 // Start SSE for real-time progress
+                                let stopped = false;
                                 const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
                                 eventSource.onmessage = (event) => {
                                   try {
@@ -573,12 +577,14 @@ export const App: React.FC = () => {
                                         const newPart = data.stdout.slice(prevStdout.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
+                                      setLogLines(prev => {
+                                        const merged = [...prev, ...newLines];
+                                        // Deduplicate consecutive identical lines & cap size
+                                        const filtered: string[] = [];
+                                        for (const line of merged) {
+                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
+                                        }
+                                        return filtered.slice(-500);
                                       });
                                     }
                                     if (data.stderr) {
@@ -594,28 +600,38 @@ export const App: React.FC = () => {
                                         const newPart = data.stderr.slice(prevStderr.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
+                                      setLogLines(prev => {
+                                        const merged = [...prev, ...newLines];
+                                        // Deduplicate consecutive identical lines & cap size
+                                        const filtered: string[] = [];
+                                        for (const line of merged) {
+                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
+                                        }
+                                        return filtered.slice(-500);
                                       });
                                     }
                                   } catch (e) {
-                                    console.error('[SSE] Error parsing message data:', e);
+                                    console.error('[DEBUG] SSE message parsing error:', e);
                                   }
                                 };
-                                // Auto-close event source on versioning completion
-                                setTimeout(() => {
+                                // Auto-close event source on route change or unmount
+                                const handleVisibilityChange = () => {
+                                  if (document.hidden) {
+                                    stopped = true;
+                                    eventSource.close();
+                                  }
+                                };
+                                document.addEventListener('visibilitychange', handleVisibilityChange);
+                                return () => {
+                                  stopped = true;
                                   eventSource.close();
-                                  console.log('[DEBUG] EventSource closed after timeout');
-                                }, 30000); // 30 seconds
+                                  document.removeEventListener('visibilitychange', handleVisibilityChange);
+                                };
                               } catch (e) {
-                                console.error('[App] Versioning error:', e);
+                                console.error('[DEBUG] Versioning button error:', e);
                               }
                             }}
-                          >Start Versioning</button>
+                          >Versioning</button>
                         </Tooltip>
                         <Tooltip
                           content={'Build & Deploy\n\nBuilds and deploys selected repos without changing branches.\nUse this for quick redeploys or hotfixes.'}
@@ -639,7 +655,8 @@ export const App: React.FC = () => {
                                 })));
                                 setRepoLogs({});
                                 // Start SSE for real-time progress
-                                const eventSource = new window.EventSource(`${base}/api/deploy/progress`);
+                                let stopped = false;
+                                const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
                                 eventSource.onmessage = (event) => {
                                   try {
                                     const data = JSON.parse(event.data);
@@ -686,12 +703,14 @@ export const App: React.FC = () => {
                                         const newPart = data.stdout.slice(prevStdout.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
+                                      setLogLines(prev => {
+                                        const merged = [...prev, ...newLines];
+                                        // Deduplicate consecutive identical lines & cap size
+                                        const filtered: string[] = [];
+                                        for (const line of merged) {
+                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
+                                        }
+                                        return filtered.slice(-500);
                                       });
                                     }
                                     if (data.stderr) {
@@ -707,25 +726,35 @@ export const App: React.FC = () => {
                                         const newPart = data.stderr.slice(prevStderr.length);
                                         newLines = newPart.split(/\r?\n/).filter(Boolean);
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
+                                      setLogLines(prev => {
+                                        const merged = [...prev, ...newLines];
+                                        // Deduplicate consecutive identical lines & cap size
+                                        const filtered: string[] = [];
+                                        for (const line of merged) {
+                                          if (filtered.length === 0 || filtered[filtered.length - 1] !== line) filtered.push(line);
+                                        }
+                                        return filtered.slice(-500);
                                       });
                                     }
                                   } catch (e) {
-                                    console.error('[SSE] Error parsing message data:', e);
+                                    console.error('[DEBUG] SSE message parsing error:', e);
                                   }
                                 };
-                                // Auto-close event source on deploy completion
-                                setTimeout(() => {
+                                // Auto-close event source on route change or unmount
+                                const handleVisibilityChange = () => {
+                                  if (document.hidden) {
+                                    stopped = true;
+                                    eventSource.close();
+                                  }
+                                };
+                                document.addEventListener('visibilitychange', handleVisibilityChange);
+                                return () => {
+                                  stopped = true;
                                   eventSource.close();
-                                  console.log('[DEBUG] EventSource closed after timeout');
-                                }, 30000); // 30 seconds
+                                  document.removeEventListener('visibilitychange', handleVisibilityChange);
+                                };
                               } catch (e) {
-                                console.error('[App] Build & Deploy error:', e);
+                                console.error('[DEBUG] Build & Deploy button error:', e);
                               }
                             }}
                           >Build & Deploy</button>
