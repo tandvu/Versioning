@@ -76,7 +76,6 @@ export const App: React.FC = () => {
         const data = await r.json();
         if (cancelled) return;
         // Log the full response for debugging
-        console.log('[App] /api/repos raw response:', data);
         if (!data || typeof data !== 'object') {
           setError('[App] /api/repos: response is not an object');
           return;
@@ -89,8 +88,6 @@ export const App: React.FC = () => {
         setRepos(data.repos);
         setVersions(data.versions || {});
         setError(null);
-        console.log('[App] repos:', data.repos);
-        console.log('[App] versions:', data.versions || {});
       } catch (e: unknown) {
         let msg: string;
         if (typeof e === 'object' && e !== null && 'message' in e) {
@@ -149,12 +146,12 @@ export const App: React.FC = () => {
       if (!deploymentFolderPath) return;
       if (withDelay) await new Promise(res => setTimeout(res, 2000));
       try {
-        console.log('[DEBUG] Scanning for deployed versions...');
+        // Scanning for deployed versions
         const base = apiBase || await detectApiBase();
         const r = await fetch(`${base}/api/deploy/versions?path=${encodeURIComponent(deploymentFolderPath)}`);
         if (!r.ok) {
           setDeployScanError(`status ${r.status}`);
-          console.log('[DEBUG] Deploy scan error, status:', r.status);
+          // Deploy scan error; status logged silently in UI
           return;
         }
         const data = await r.json();
@@ -162,7 +159,7 @@ export const App: React.FC = () => {
           // Clear cached resolutions so the UI re-resolves deployed versions
           clearResolutionCache();
           setDeployVersions(data.versions);
-          console.log('[DEBUG] Deployed versions updated:', data.versions);
+          // Deployed versions updated
         }
       } catch (e: unknown) {
         let msg: string;
@@ -173,7 +170,7 @@ export const App: React.FC = () => {
           msg = String(e);
         }
         if (!cancelled) setDeployScanError(msg || 'scan failed');
-        console.log('[DEBUG] Deploy scan exception:', e);
+        // Deploy scan exception
       }
     }
     // Only delay if deployRefreshKey changed
@@ -347,11 +344,10 @@ export const App: React.FC = () => {
             }
           }
         }
-        console.log('[DEBUG] branchNames from backend:', branches);
-        console.log('[DEBUG] Repo list:', repos);
+        // branchNames and repo list fetched
         if (!cancelled) setBranchNames(branches);
       } catch (e) {
-        console.log('[DEBUG] Error fetching branchNames for base', firstBasePath, e);
+        // Error fetching branchNames for base
       }
     })();
     return () => { cancelled = true; stopped = true; };
@@ -612,11 +608,11 @@ export const App: React.FC = () => {
                                       });
                                     }
                                   } catch (e) {
-                                    console.error('[DEBUG] Error parsing SSE data:', e);
+                                    // Error parsing SSE data
                                   }
                                 };
                                 eventSource.onerror = (err) => {
-                                  console.error('[DEBUG] SSE error:', err);
+                                  // SSE error
                                   stopped = true;
                                 };
                                 // Stop SSE on unmount or when versioning completes
@@ -625,7 +621,7 @@ export const App: React.FC = () => {
                                   eventSource.close();
                                 }, 30000); // auto-stop after 30 seconds
                               } catch (e) {
-                                console.error('[DEBUG] Versioning start error:', e);
+                                // Versioning start error
                               }
                             }}
                           >Start Versioning</button>
@@ -662,7 +658,7 @@ export const App: React.FC = () => {
                                 eventSource.onmessage = (event) => {
                                   try {
                                     const data = JSON.parse(event.data);
-                                    console.log('[DEBUG] Build & Deploy SSE event:', data);
+                                    // Build & Deploy SSE event
                                     if (!data || !data.repo || !data.step) return;
                                     setProgress(prev => prev.map(p => {
                                       if (p.repo !== data.repo) return p;
@@ -736,11 +732,11 @@ export const App: React.FC = () => {
                                       });
                                     }
                                   } catch (e) {
-                                    console.error('[DEBUG] Error parsing SSE data:', e);
+                                    // Error parsing SSE data
                                   }
                                 };
                                 eventSource.onerror = (err) => {
-                                  console.error('[DEBUG] SSE error:', err);
+                                  // SSE error
                                   stopped = true;
                                 };
                                 // Stop SSE after a longer window to allow build to finish
@@ -753,9 +749,9 @@ export const App: React.FC = () => {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ repos: chosen, deployPath: deploymentFolderPath }),
-                                }).catch(err => console.error('[DEBUG] build-deploy request error:', err));
+                                }).catch(() => { /* build-deploy request error */ });
                               } catch (e) {
-                                console.error('[DEBUG] Versioning start error:', e);
+                                // Versioning start error
                               }
                             }}
                           >Build & Deploy</button>
