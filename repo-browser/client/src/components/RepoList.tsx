@@ -100,7 +100,13 @@ export const RepoList: React.FC<{
                   style={{
                     marginLeft: 8,
                     fontSize: '0.7em',
-                    color: branchNames[r] === 'master' ? '#a3a3a3' : '#22c55e',
+                    color:
+                      (r === 'extension-scaffold' && branchNames[r] === 'develop') ||
+                        (r === 'webmap' && branchNames[r] === 'ampt-develop') ||
+                        (r === 'oprep-tool' && branchNames[r] === 'main') ||
+                        branchNames[r] === 'master'
+                        ? '#a3a3a3'
+                        : '#22c55e',
                     fontWeight: 600,
                     transition: 'color 0.2s',
                   }}

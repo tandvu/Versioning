@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useRef } from 'react';
 // helper imports (resolveDeployVersion removed - unused)
 // @ts-expect-error media asset handled by bundler
 import copyVideo from '../video/Copy.mp4';
+import { Tooltip } from '../components/Tooltip';
 import '../styles/buttons.css';
 import '../css/App.css';
 import { RepoList } from '../components/RepoList';
@@ -429,7 +430,6 @@ export const App: React.FC = () => {
                     title="Play help video"
                   >(See video)</button>
                 </div>
-                {/* ...existing code... */}
                 <div className="main-content-filter-row">
                   <textarea
                     className={"repo-textarea" + (missingVersions.length ? ' repo-textarea-error' : '')}
@@ -490,300 +490,326 @@ export const App: React.FC = () => {
                 {!loading && !error && (
                   <div className="repo-progress-list">
                     <ProgressList progress={progress} repoLogs={repoLogs} />
-                    <RepoList repos={filtered} selected={selected} toggle={toggle} versions={versions} targetVersions={filterTargetVersions} deployVersions={deployVersions} showBothVersions branchNames={branchNames} showBranchNames={showBranchNames} />
-                    {/* ...existing code... */}
-                    {deployScanError && <div className="repo-deploy-error">Deploy scan error: {deployScanError}</div>}
+                    <RepoList
+                      repos={filtered}
+                      selected={selected}
+                      toggle={toggle}
+                      versions={versions}
+                      targetVersions={filterTargetVersions}
+                      deployVersions={deployVersions}
+                      showBothVersions
+                      branchNames={branchNames}
+                      showBranchNames={showBranchNames}
+                    />
+                    {deployScanError && (
+                      <div className="repo-deploy-error">Deploy scan error: {deployScanError}</div>
+                    )}
                     <div className="repo-versioning-btns">
-                      <button
-                        className="btn btn-secondary"
-                        style={{ marginRight: '0.75rem' }}
-                        disabled={selected.size === 0}
-                        title={selected.size ? 'Checkout master for selected repos' : 'Select repos to enable'}
-                        onClick={async () => {
-                          try {
-                            const base = apiBase || await detectApiBase();
-                            const chosen = Array.from(selected);
-                            if (!chosen.length) return;
-                            // Initialize progress state and clear per-repo logs
-                            setProgress(chosen.map(repo => ({
-                              repo,
-                              steps: [
-                                { label: 'Checkout master', status: 'pending' },
-                                { label: 'Build', status: 'pending' },
-                                { label: 'Deploy WAR', status: 'pending' },
-                              ]
-                            })));
-                            setRepoLogs({});
-                            // Start SSE for real-time progress
-                            const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
-                            eventSource.onmessage = (event) => {
-                              try {
-                                const data = JSON.parse(event.data);
-                                if (!data || !data.repo || !data.step) return;
-                                setProgress(prev => prev.map(p => {
-                                  if (p.repo !== data.repo) return p;
-                                  const steps = p.steps.map(s => {
-                                    if (s.label === data.step) {
-                                      return {
-                                        ...s,
-                                        status: data.status || s.status,
-                                        detail: data.detail || s.detail,
-                                        stdout: data.stdout || s.stdout,
-                                        stderr: data.stderr || s.stderr,
-                                        warPath: data.warPath || s.warPath,
-                                        branch: data.branch || s.branch,
-                                      };
+                      {/* Versioning Button with Tooltip */}
+                      <Tooltip
+                        content={selected.size
+                          ? 'Versioning\n\nChecks out master (or main/develop for special repos), builds, and deploys the selected repos.\nUse this for full release workflow.'
+                          : 'Select repos to enable'}
+                      >
+                        <button
+                          className="btn btn-secondary"
+                          style={{ marginRight: '0.75rem' }}
+                          disabled={selected.size === 0}
+                          onClick={async () => {
+                            try {
+                              const base = apiBase || await detectApiBase();
+                              const chosen = Array.from(selected);
+                              if (!chosen.length) return;
+                              // Initialize progress state and clear per-repo logs
+                              setProgress(chosen.map(repo => ({
+                                repo,
+                                steps: [
+                                  { label: 'Checkout master', status: 'pending' },
+                                  { label: 'Build', status: 'pending' },
+                                  { label: 'Deploy WAR', status: 'pending' },
+                                ]
+                              })));
+                              setRepoLogs({});
+                              // Start SSE for real-time progress
+                              const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
+                              eventSource.onmessage = (event) => {
+                                try {
+                                  const data = JSON.parse(event.data);
+                                  if (!data || !data.repo || !data.step) return;
+                                  setProgress(prev => prev.map(p => {
+                                    if (p.repo !== data.repo) return p;
+                                    const steps = p.steps.map(s => {
+                                      if (s.label === data.step) {
+                                        return {
+                                          ...s,
+                                          status: data.status || s.status,
+                                          detail: data.detail || s.detail,
+                                          stdout: data.stdout || s.stdout,
+                                          stderr: data.stderr || s.stderr,
+                                          warPath: data.warPath || s.warPath,
+                                          branch: data.branch || s.branch,
+                                        };
+                                      }
+                                      return s;
+                                    });
+                                    // Attach extra info at top level for ProgressList
+                                    return {
+                                      ...p,
+                                      steps,
+                                      branch: data.branch || p.branch,
+                                      stdout: data.stdout || p.stdout,
+                                      stderr: data.stderr || p.stderr,
+                                      warPath: data.warPath || p.warPath,
+                                      deployError: data.detail || p.deployError
+                                    };
+                                  }));
+                                  // Add log lines for stdout/stderr to both global and per-repo logs
+                                  // Only append new log lines for real-time build output
+                                  if (data.stdout) {
+                                    let prevStdout = '';
+                                    setProgress(prev => {
+                                      const p = prev.find(x => x.repo === data.repo);
+                                      const prevStep = p?.steps.find(s => s.label === data.step);
+                                      prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
+                                      return prev;
+                                    });
+                                    let newLines: string[] = [];
+                                    if (data.stdout.length > prevStdout.length) {
+                                      const newPart = data.stdout.slice(prevStdout.length);
+                                      newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                    } else if (!prevStdout && data.stdout.length) {
+                                      newLines = data.stdout.split(/\r?\n/).filter(Boolean);
                                     }
-                                    return s;
-                                  });
-                                  // Attach extra info at top level for ProgressList
-                                  return {
-                                    ...p,
-                                    steps,
-                                    branch: data.branch || p.branch,
-                                    stdout: data.stdout || p.stdout,
-                                    stderr: data.stderr || p.stderr,
-                                    warPath: data.warPath || p.warPath,
-                                    deployError: data.detail || p.deployError
-                                  };
-                                }));
-                                // Add log lines for stdout/stderr to both global and per-repo logs
-                                // Only append new log lines for real-time build output
-                                if (data.stdout) {
-                                  let prevStdout = '';
-                                  setProgress(prev => {
-                                    const p = prev.find(x => x.repo === data.repo);
-                                    const prevStep = p?.steps.find(s => s.label === data.step);
-                                    prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
-                                    return prev;
-                                  });
-                                  let newLines: string[] = [];
-                                  if (data.stdout.length > prevStdout.length) {
-                                    const newPart = data.stdout.slice(prevStdout.length);
-                                    newLines = newPart.split(/\r?\n/).filter(Boolean);
-                                  } else if (!prevStdout && data.stdout.length) {
-                                    newLines = data.stdout.split(/\r?\n/).filter(Boolean);
-                                  }
-                                  if (newLines.length) {
-                                    setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stdout] ${l}`)].slice(-800));
-                                    setRepoLogs(prev => {
-                                      const prevArr = prev[data.repo] || [];
-                                      return {
-                                        ...prev,
-                                        [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stdout] ${l}`)].slice(-200)
-                                      };
-                                    });
-                                  }
-                                }
-                                if (data.stderr) {
-                                  let prevStderr = '';
-                                  setProgress(prev => {
-                                    const p = prev.find(x => x.repo === data.repo);
-                                    const prevStep = p?.steps.find(s => s.label === data.step);
-                                    prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
-                                    return prev;
-                                  });
-                                  let newLines: string[] = [];
-                                  if (data.stderr.length > prevStderr.length) {
-                                    const newPart = data.stderr.slice(prevStderr.length);
-                                    newLines = newPart.split(/\r?\n/).filter(Boolean);
-                                  } else if (!prevStderr && data.stderr.length) {
-                                    newLines = data.stderr.split(/\r?\n/).filter(Boolean);
-                                  }
-                                  if (newLines.length) {
-                                    setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stderr] ${l}`)].slice(-800));
-                                    setRepoLogs(prev => {
-                                      const prevArr = prev[data.repo] || [];
-                                      return {
-                                        ...prev,
-                                        [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stderr] ${l}`)].slice(-200)
-                                      };
-                                    });
-                                  }
-                                }
-                              } catch (e) {
-                                // ignore parse errors
-                              }
-                            };
-                            eventSource.onerror = () => {
-                              eventSource.close();
-                            };
-                            // Start the process
-                            const res = await fetch(`${base}/api/versioning/start`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ repos: chosen, deploymentFolderPath })
-                            });
-                            if (!res.ok) {
-                              setLogLines(prev => [...prev, `[start-versioning] request failed status ${res.status}`]);
-                              eventSource.close();
-                              return;
-                            } else {
-                              // After deploy, reload deployed versions
-                              try {
-                                setDeployRefreshKey(k => k + 1);
-                              } catch {/* ignore */ }
-                            }
-                          } catch (e: unknown) {
-                            let msg: string;
-                            if (typeof e === 'object' && e !== null && 'message' in e) {
-                              const m = (e as { message: unknown }).message;
-                              msg = typeof m === 'string' ? m : String(m);
-                            } else {
-                              msg = String(e);
-                            }
-                            setLogLines(prev => [...prev, `[start-versioning] error ${msg}`]);
-                          }
-                        }}
-                      >Start Versioning</button>
-                      <button
-                        className="btn btn-primary"
-                        disabled={selected.size === 0}
-                        title={selected.size ? 'Build & Deploy selected repos' : 'Select repos to enable'}
-                        onClick={async () => {
-                          try {
-                            const base = apiBase || await detectApiBase();
-                            const chosen = Array.from(selected);
-                            if (!chosen.length) return;
-                            setProgress(chosen.map(repo => ({
-                              repo,
-                              steps: [
-                                { label: 'Build', status: 'pending' },
-                                { label: 'Deploy WAR', status: 'pending' },
-                              ]
-                            })));
-                            setRepoLogs({});
-                            const eventSource = new window.EventSource(`${base}/api/versioning/progress?mode=build-deploy`);
-                            eventSource.onmessage = (event) => {
-                              try {
-                                const data = JSON.parse(event.data);
-                                if (!data || !data.repo || !data.step) return;
-                                setProgress(prev => prev.map(p => {
-                                  if (p.repo !== data.repo) return p;
-                                  const steps = p.steps.map(s => {
-                                    if (s.label === data.step) {
-                                      return {
-                                        ...s,
-                                        status: data.status || s.status,
-                                        detail: data.detail || s.detail,
-                                        stdout: data.stdout || s.stdout,
-                                        stderr: data.stderr || s.stderr,
-                                        warPath: data.warPath || s.warPath,
-                                        branch: data.branch || s.branch,
-                                      };
+                                    if (newLines.length) {
+                                      setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stdout] ${l}`)].slice(-800));
+                                      setRepoLogs(prev => {
+                                        const prevArr = prev[data.repo] || [];
+                                        return {
+                                          ...prev,
+                                          [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stdout] ${l}`)].slice(-200)
+                                        };
+                                      });
                                     }
-                                    return s;
-                                  });
-                                  return {
-                                    ...p,
-                                    steps,
-                                    branch: data.branch || p.branch,
-                                    stdout: data.stdout || p.stdout,
-                                    stderr: data.stderr || p.stderr,
-                                    warPath: data.warPath || p.warPath,
-                                    deployError: data.detail || p.deployError
-                                  };
-                                }));
-                                if (data.stdout) {
-                                  let prevStdout = '';
-                                  setProgress(prev => {
-                                    const p = prev.find(x => x.repo === data.repo);
-                                    const prevStep = p?.steps.find(s => s.label === data.step);
-                                    prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
-                                    return prev;
-                                  });
-                                  let newLines: string[] = [];
-                                  if (data.stdout.length > prevStdout.length) {
-                                    const newPart = data.stdout.slice(prevStdout.length);
-                                    newLines = newPart.split(/\r?\n/).filter(Boolean);
-                                  } else if (!prevStdout && data.stdout.length) {
-                                    newLines = data.stdout.split(/\r?\n/).filter(Boolean);
                                   }
-                                  if (newLines.length) {
-                                    setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stdout] ${l}`)].slice(-800));
-                                    setRepoLogs(prev => {
-                                      const prevArr = prev[data.repo] || [];
-                                      return {
-                                        ...prev,
-                                        [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stdout] ${l}`)].slice(-200)
-                                      };
+                                  if (data.stderr) {
+                                    let prevStderr = '';
+                                    setProgress(prev => {
+                                      const p = prev.find(x => x.repo === data.repo);
+                                      const prevStep = p?.steps.find(s => s.label === data.step);
+                                      prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
+                                      return prev;
                                     });
+                                    let newLines: string[] = [];
+                                    if (data.stderr.length > prevStderr.length) {
+                                      const newPart = data.stderr.slice(prevStderr.length);
+                                      newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                    } else if (!prevStderr && data.stderr.length) {
+                                      newLines = data.stderr.split(/\r?\n/).filter(Boolean);
+                                    }
+                                    if (newLines.length) {
+                                      setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stderr] ${l}`)].slice(-800));
+                                      setRepoLogs(prev => {
+                                        const prevArr = prev[data.repo] || [];
+                                        return {
+                                          ...prev,
+                                          [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stderr] ${l}`)].slice(-200)
+                                        };
+                                      });
+                                    }
                                   }
+                                } catch (e) {
+                                  // ignore parse errors
                                 }
-                                if (data.stderr) {
-                                  let prevStderr = '';
-                                  setProgress(prev => {
-                                    const p = prev.find(x => x.repo === data.repo);
-                                    const prevStep = p?.steps.find(s => s.label === data.step);
-                                    prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
-                                    return prev;
-                                  });
-                                  let newLines: string[] = [];
-                                  if (data.stderr.length > prevStderr.length) {
-                                    const newPart = data.stderr.slice(prevStderr.length);
-                                    newLines = newPart.split(/\r?\n/).filter(Boolean);
-                                  } else if (!prevStderr && data.stderr.length) {
-                                    newLines = data.stderr.split(/\r?\n/).filter(Boolean);
-                                  }
-                                  if (newLines.length) {
-                                    setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stderr] ${l}`)].slice(-800));
-                                    setRepoLogs(prev => {
-                                      const prevArr = prev[data.repo] || [];
-                                      return {
-                                        ...prev,
-                                        [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stderr] ${l}`)].slice(-200)
-                                      };
-                                    });
-                                  }
-                                }
-                              } catch (e) {
-                                // ignore parse errors
+                              };
+                              eventSource.onerror = () => {
+                                eventSource.close();
+                              };
+                              // Start the process
+                              const res = await fetch(`${base}/api/versioning/start`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ repos: chosen, deploymentFolderPath })
+                              });
+                              if (!res.ok) {
+                                setLogLines(prev => [...prev, `[start-versioning] request failed status ${res.status}`]);
+                                eventSource.close();
+                                return;
+                              } else {
+                                // After deploy, reload deployed versions
+                                try {
+                                  setDeployRefreshKey(k => k + 1);
+                                } catch {/* ignore */ }
                               }
-                            };
-                            eventSource.onerror = () => {
-                              eventSource.close();
-                            };
-                            // Start the process
-                            const res = await fetch(`${base}/api/versioning/build-deploy`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ repos: chosen, deploymentFolderPath })
-                            });
-                            if (!res.ok) {
-                              setLogLines(prev => [...prev, `[build-deploy] request failed status ${res.status}`]);
-                              eventSource.close();
-                              return;
-                            } else {
-                              try {
-                                setDeployRefreshKey(k => k + 1);
-                              } catch {/* ignore */ }
+                            } catch (e: unknown) {
+                              let msg: string;
+                              if (typeof e === 'object' && e !== null && 'message' in e) {
+                                const m = (e as { message: unknown }).message;
+                                msg = typeof m === 'string' ? m : String(m);
+                              } else {
+                                msg = String(e);
+                              }
+                              setLogLines(prev => [...prev, `[start-versioning] error ${msg}`]);
                             }
-                          } catch (e: unknown) {
-                            let msg: string;
-                            if (typeof e === 'object' && e !== null && 'message' in e) {
-                              const m = (e as { message: unknown }).message;
-                              msg = typeof m === 'string' ? m : String(m);
-                            } else {
-                              msg = String(e);
+                          }}
+                        >Start Versioning</button>
+                      </Tooltip>
+                      {/* Build & Deploy Button with Tooltip */}
+                      <Tooltip
+                        content={selected.size
+                          ? 'Build & Deploy\n\nBuilds and deploys selected repos without changing branches.\nUse this for quick redeploys or hotfixes.'
+                          : 'Select repos to enable'}
+                      >
+                        <button
+                          className="btn btn-primary"
+                          disabled={selected.size === 0}
+                          onClick={async () => {
+                            try {
+                              const base = apiBase || await detectApiBase();
+                              const chosen = Array.from(selected);
+                              if (!chosen.length) return;
+                              setProgress(chosen.map(repo => ({
+                                repo,
+                                steps: [
+                                  { label: 'Build', status: 'pending' },
+                                  { label: 'Deploy WAR', status: 'pending' },
+                                ]
+                              })));
+                              setRepoLogs({});
+                              const eventSource = new window.EventSource(`${base}/api/versioning/progress?mode=build-deploy`);
+                              eventSource.onmessage = (event) => {
+                                try {
+                                  const data = JSON.parse(event.data);
+                                  if (!data || !data.repo || !data.step) return;
+                                  setProgress(prev => prev.map(p => {
+                                    if (p.repo !== data.repo) return p;
+                                    const steps = p.steps.map(s => {
+                                      if (s.label === data.step) {
+                                        return {
+                                          ...s,
+                                          status: data.status || s.status,
+                                          detail: data.detail || s.detail,
+                                          stdout: data.stdout || s.stdout,
+                                          stderr: data.stderr || s.stderr,
+                                          warPath: data.warPath || s.warPath,
+                                          branch: data.branch || s.branch,
+                                        };
+                                      }
+                                      return s;
+                                    });
+                                    return {
+                                      ...p,
+                                      steps,
+                                      branch: data.branch || p.branch,
+                                      stdout: data.stdout || p.stdout,
+                                      stderr: data.stderr || p.stderr,
+                                      warPath: data.warPath || p.warPath,
+                                      deployError: data.detail || p.deployError
+                                    };
+                                  }));
+                                  if (data.stdout) {
+                                    let prevStdout = '';
+                                    setProgress(prev => {
+                                      const p = prev.find(x => x.repo === data.repo);
+                                      const prevStep = p?.steps.find(s => s.label === data.step);
+                                      prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
+                                      return prev;
+                                    });
+                                    let newLines: string[] = [];
+                                    if (data.stdout.length > prevStdout.length) {
+                                      const newPart = data.stdout.slice(prevStdout.length);
+                                      newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                    } else if (!prevStdout && data.stdout.length) {
+                                      newLines = data.stdout.split(/\r?\n/).filter(Boolean);
+                                    }
+                                    if (newLines.length) {
+                                      setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stdout] ${l}`)].slice(-800));
+                                      setRepoLogs(prev => {
+                                        const prevArr = prev[data.repo] || [];
+                                        return {
+                                          ...prev,
+                                          [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stdout] ${l}`)].slice(-200)
+                                        };
+                                      });
+                                    }
+                                  }
+                                  if (data.stderr) {
+                                    let prevStderr = '';
+                                    setProgress(prev => {
+                                      const p = prev.find(x => x.repo === data.repo);
+                                      const prevStep = p?.steps.find(s => s.label === data.step);
+                                      prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
+                                      return prev;
+                                    });
+                                    let newLines: string[] = [];
+                                    if (data.stderr.length > prevStderr.length) {
+                                      const newPart = data.stderr.slice(prevStderr.length);
+                                      newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                    } else if (!prevStderr && data.stderr.length) {
+                                      newLines = data.stderr.split(/\r?\n/).filter(Boolean);
+                                    }
+                                    if (newLines.length) {
+                                      setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stderr] ${l}`)].slice(-800));
+                                      setRepoLogs(prev => {
+                                        const prevArr = prev[data.repo] || [];
+                                        return {
+                                          ...prev,
+                                          [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stderr] ${l}`)].slice(-200)
+                                        };
+                                      });
+                                    }
+                                  }
+                                } catch (e) {
+                                  // ignore parse errors
+                                }
+                              };
+                              eventSource.onerror = () => {
+                                eventSource.close();
+                              };
+                              const res = await fetch(`${base}/api/versioning/build-deploy`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ repos: chosen, deploymentFolderPath })
+                              });
+                              if (!res.ok) {
+                                setLogLines(prev => [...prev, `[build-deploy] request failed status ${res.status}`]);
+                                eventSource.close();
+                                return;
+                              } else {
+                                try {
+                                  setDeployRefreshKey(k => k + 1);
+                                } catch {/* ignore */ }
+                              }
+                            } catch (e: unknown) {
+                              let msg: string;
+                              if (typeof e === 'object' && e !== null && 'message' in e) {
+                                const m = (e as { message: unknown }).message;
+                                msg = typeof m === 'string' ? m : String(m);
+                              } else {
+                                msg = String(e);
+                              }
+                              setLogLines(prev => [...prev, `[build-deploy] error ${msg}`]);
                             }
-                            setLogLines(prev => [...prev, `[build-deploy] error ${msg}`]);
-                          }
-                        }}
-                      >Build & Deploy</button>
+                          }}
+                        >Build & Deploy</button>
+                      </Tooltip>
                     </div>
                   </div>
                 )}
               </div>
-              {/* Right Column (logs) */}
-              {showLogs && (
-                <div className="server-debug-log-panel">
-                  <h3 className="server-debug-log-title">Server Debug Log</h3>
-                  <div className="server-debug-log-content">
-                    {logLines.length === 0 ? <div className="server-debug-log-empty">No log lines yet.</div> : logLines.slice(-500).map((l, i) => <div key={i}>{l}</div>)}
+              {/* Right Column (logs + settings) */}
+              <div className="main-content-right">
+                {showLogs && (
+                  <div className="debug-log-viewer">
+                    <h2 className="debug-log-title">Debug Logs</h2>
+                    <div className="debug-log-lines">
+                      {logLines.length === 0 && <div className="debug-log-empty">No logs found.</div>}
+                      {logLines.map((line, i) => (
+                        <div key={i} className="debug-log-line">{line}</div>
+                      ))}
+                    </div>
                   </div>
-                  {/* Second Base Snapshot panel removed */}
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </>
         )}
