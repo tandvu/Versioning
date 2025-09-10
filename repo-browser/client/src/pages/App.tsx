@@ -373,16 +373,55 @@ export const App: React.FC = () => {
           </small>
           <small className="app-small">
             <span className="app-label">Deployment Folder Path:</span>
-            <input
-              type="text"
-              value={deploymentFolderPath}
-              onChange={e => {
-                setDeploymentFolderPath(e.target.value);
-                window.localStorage.setItem('deploymentFolderPath', e.target.value);
-              }}
-              style={{ width: '32em', maxWidth: '100%', marginRight: '0.5em', fontSize: '0.95em', padding: '2px 6px' }}
-              placeholder={DEFAULT_DEPLOY_PATH}
-            />
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Tooltip content={`Deployment Folder\n${deploymentFolderPath}`} forceShow={false}>
+                <input
+                  type="text"
+                  value={deploymentFolderPath}
+                  onChange={e => {
+                    setDeploymentFolderPath(e.target.value);
+                    window.localStorage.setItem('deploymentFolderPath', e.target.value);
+                  }}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={(e) => e.currentTarget.select()}
+                  onMouseUp={(e) => e.preventDefault()}
+                  title={deploymentFolderPath}
+                  style={{
+                    width: '32em',
+                    maxWidth: '100%',
+                    marginRight: '0.5em',
+                    fontSize: '0.95em',
+                    padding: '2px 6px',
+                    backgroundColor: '#181f2a',
+                    color: '#e0e6ef',
+                    border: '1px solid #2d3642',
+                    borderRadius: 4
+                  }}
+                  placeholder={DEFAULT_DEPLOY_PATH}
+                />
+              </Tooltip>
+              <Tooltip content={'Paste the path of the Deployment Folder'} forceShow={false}>
+                <button
+                  type="button"
+                  title="Paste from clipboard"
+                  aria-label="Paste deployment path from clipboard"
+                  className="btn btn-icon"
+                  onClick={async () => {
+                    try {
+                      const txt = await navigator.clipboard.readText();
+                      if (!txt) return;
+                      // Use the first non-empty line, trimmed
+                      const first = txt.split(/\r?\n/).map(s => s.trim()).find(Boolean) || '';
+                      if (!first) return;
+                      setDeploymentFolderPath(first);
+                      window.localStorage.setItem('deploymentFolderPath', first);
+                    } catch {
+                      // ignore clipboard errors
+                    }
+                  }}
+                >📋</button>
+              </Tooltip>
+            </span>
           </small>
         </div>
         <button
