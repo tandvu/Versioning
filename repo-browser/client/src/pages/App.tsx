@@ -507,9 +507,8 @@ export const App: React.FC = () => {
                     <div className="repo-versioning-btns">
                       {/* Versioning Button with Tooltip */}
                       <Tooltip
-                        content={selected.size
-                          ? 'Versioning\n\nChecks out master (or main/develop for special repos), builds, and deploys the selected repos.\nUse this for full release workflow.'
-                          : 'Select repos to enable'}
+                        content={'Versioning\n\nChecks out master (or main/develop for special repos), builds, and deploys the selected repos.\nUse this for full release workflow.'}
+                        forceShow={false}
                       >
                         <button
                           className="btn btn-secondary"
@@ -655,9 +654,8 @@ export const App: React.FC = () => {
                       </Tooltip>
                       {/* Build & Deploy Button with Tooltip */}
                       <Tooltip
-                        content={selected.size
-                          ? 'Build & Deploy\n\nBuilds and deploys selected repos without changing branches.\nUse this for quick redeploys or hotfixes.'
-                          : 'Select repos to enable'}
+                        content={'Build & Deploy\n\nBuilds and deploys selected repos without changing branches.\nUse this for quick redeploys or hotfixes.'}
+                        forceShow={false}
                       >
                         <button
                           className="btn btn-primary"
@@ -696,6 +694,7 @@ export const App: React.FC = () => {
                                       }
                                       return s;
                                     });
+                                    // Attach extra info at top level for ProgressList
                                     return {
                                       ...p,
                                       steps,
@@ -706,6 +705,8 @@ export const App: React.FC = () => {
                                       deployError: data.detail || p.deployError
                                     };
                                   }));
+                                  // Add log lines for stdout/stderr to both global and per-repo logs
+                                  // Only append new log lines for real-time build output
                                   if (data.stdout) {
                                     let prevStdout = '';
                                     setProgress(prev => {
@@ -765,16 +766,18 @@ export const App: React.FC = () => {
                               eventSource.onerror = () => {
                                 eventSource.close();
                               };
-                              const res = await fetch(`${base}/api/versioning/build-deploy`, {
+                              // Start the process
+                              const res = await fetch(`${base}/api/versioning/start`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ repos: chosen, deploymentFolderPath })
                               });
                               if (!res.ok) {
-                                setLogLines(prev => [...prev, `[build-deploy] request failed status ${res.status}`]);
+                                setLogLines(prev => [...prev, `[start-versioning] request failed status ${res.status}`]);
                                 eventSource.close();
                                 return;
                               } else {
+                                // After deploy, reload deployed versions
                                 try {
                                   setDeployRefreshKey(k => k + 1);
                                 } catch {/* ignore */ }
@@ -787,7 +790,7 @@ export const App: React.FC = () => {
                               } else {
                                 msg = String(e);
                               }
-                              setLogLines(prev => [...prev, `[build-deploy] error ${msg}`]);
+                              setLogLines(prev => [...prev, `[start-versioning] error ${msg}`]);
                             }
                           }}
                         >Build & Deploy</button>
@@ -795,25 +798,11 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                 )}
-              </div>
-              {/* Right Column (logs + settings) */}
-              <div className="main-content-right">
-                {showLogs && (
-                  <div className="debug-log-viewer">
-                    <h2 className="debug-log-title">Debug Logs</h2>
-                    <div className="debug-log-lines">
-                      {logLines.length === 0 && <div className="debug-log-empty">No logs found.</div>}
-                      {logLines.map((line, i) => (
-                        <div key={i} className="debug-log-line">{line}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+              </div> {/* main-content-left */}
+            </div> {/* main-content-row */}
           </>
         )}
       </main>
     </>
   );
-};
+}
