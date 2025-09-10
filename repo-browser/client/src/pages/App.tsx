@@ -53,7 +53,6 @@ export const App: React.FC = () => {
   const [_probing, setProbing] = useState(false);
   // prevFilterSig and deploying removed (unused)
   const _prevFilterSig = useRef<string | null>(null);
-  const [deployRefreshKey, setDeployRefreshKey] = useState(0);
   // Debug response storage removed (unused)
 
   // Add state for branch names and showBranchNames checkbox
@@ -178,7 +177,7 @@ export const App: React.FC = () => {
       }
     }
     // Only delay if deployRefreshKey changed
-    if (deployRefreshKey > 0) {
+    if (repos.length > 0) {
       scan(true);
       // Trigger a second scan after another 2 seconds to catch late updates
       setTimeout(() => {
@@ -188,7 +187,7 @@ export const App: React.FC = () => {
       scan(false);
     }
     return () => { cancelled = true; };
-  }, [deploymentFolderPath, apiBase, deployRefreshKey]);
+  }, [deploymentFolderPath, apiBase, repos]);
 
   // Poll server debug log endpoint when visible
   useEffect(() => {
@@ -387,11 +386,6 @@ export const App: React.FC = () => {
               style={{ width: '32em', maxWidth: '100%', marginRight: '0.5em', fontSize: '0.95em', padding: '2px 6px' }}
               placeholder={DEFAULT_DEPLOY_PATH}
             />
-            <button
-              className="btn btn-outline btn-icon app-refresh-btn"
-              title="Refresh deployed versions"
-              onClick={() => setDeployRefreshKey(k => k + 1)}
-            >🔄 Refresh</button>
           </small>
         </div>
         <button
@@ -633,11 +627,6 @@ export const App: React.FC = () => {
                                 setLogLines(prev => [...prev, `[start-versioning] request failed status ${res.status}`]);
                                 eventSource.close();
                                 return;
-                              } else {
-                                // After deploy, reload deployed versions
-                                try {
-                                  setDeployRefreshKey(k => k + 1);
-                                } catch {/* ignore */ }
                               }
                             } catch (e: unknown) {
                               let msg: string;
@@ -776,11 +765,6 @@ export const App: React.FC = () => {
                                 setLogLines(prev => [...prev, `[start-versioning] request failed status ${res.status}`]);
                                 eventSource.close();
                                 return;
-                              } else {
-                                // After deploy, reload deployed versions
-                                try {
-                                  setDeployRefreshKey(k => k + 1);
-                                } catch {/* ignore */ }
                               }
                             } catch (e: unknown) {
                               let msg: string;
