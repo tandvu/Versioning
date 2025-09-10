@@ -78,14 +78,14 @@ export const ProgressList: React.FC<ProgressListProps> = ({ progress, repoLogs }
     <div style={{ margin: '1rem 0', background: '#181e2a', borderRadius: 8, padding: 12, border: '1px solid #2d3642' }}>
       <h4 style={{ margin: '0 0 .5rem 0', fontSize: 15 }}>Build & Deploy Progress</h4>
       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-        {progress.map((item) => {
+        {progress.map((item, idx) => {
           const isActive = item.steps.some(s => s.status === 'running');
           const isDone = item.steps.length > 0 && item.steps.every(s => s.status === 'success');
           const isExpanded = !!expandedRepos[item.repo];
           return (
             <li key={item.repo} style={{ marginBottom: 18 }}>
               <div style={{ fontWeight: 600, color: '#facc15', fontSize: 18, display: 'flex', alignItems: 'center' }}>
-                {item.repo}
+                <span style={{ marginRight: 8 }}>{idx + 1}.</span> {item.repo}
                 {isDone && <span style={{ marginLeft: 8, color: '#facc15', fontSize: 18 }}>✔️</span>}
                 {isDone && (
                   <button
