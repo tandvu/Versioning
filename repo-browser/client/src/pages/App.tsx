@@ -317,15 +317,30 @@ export const App: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(`${apiBase}/api/debug/base?path=${encodeURIComponent(firstBasePath.replace(/\\/g, '/'))}`);
-        if (r.ok) {
-          const data = await r.json();
-          if (data && data.branchNames) {
-            console.log('[DEBUG] branchNames from backend:', data.branchNames);
-            console.log('[DEBUG] Repo list:', repos);
-            if (!cancelled) setBranchNames(data.branchNames);
+        // Fetch branch names for first base
+        const r1 = await fetch(`${apiBase}/api/debug/base?path=${encodeURIComponent(firstBasePath.replace(/\\/g, '/'))}`);
+        let branches: Record<string, string> = {};
+        if (r1.ok) {
+          const data1 = await r1.json();
+          if (data1 && data1.branchNames) {
+            branches = { ...data1.branchNames };
           }
         }
+        // Special case: opt-soa from second base
+        const optSoaRepo = 'opt-soa';
+        if (repos.includes(optSoaRepo)) {
+          const secondBase = 'C:/AMPT_DEV/TRMC_MODULE';
+          const r2 = await fetch(`${apiBase}/api/debug/base?path=${encodeURIComponent(secondBase)}`);
+          if (r2.ok) {
+            const data2 = await r2.json();
+            if (data2 && data2.branchNames && typeof data2.branchNames[optSoaRepo] === 'string') {
+              branches[optSoaRepo] = data2.branchNames[optSoaRepo];
+            }
+          }
+        }
+        console.log('[DEBUG] branchNames from backend:', branches);
+        console.log('[DEBUG] Repo list:', repos);
+        if (!cancelled) setBranchNames(branches);
       } catch (e) {
         console.log('[DEBUG] Error fetching branchNames for base', firstBasePath, e);
       }
