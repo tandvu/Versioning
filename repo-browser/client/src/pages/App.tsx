@@ -515,8 +515,12 @@ export const App: React.FC = () => {
                                 const base = apiBase || await detectApiBase();
                                 const chosen = Array.from(selected);
                                 if (!chosen.length) return;
+                                // Order by current visible list order (fallback to full repos list)
+                                const listOrder = (filtered && filtered.length ? filtered : repos);
+                                const orderedChosen = [...chosen].sort((a, b) => listOrder.indexOf(a) - listOrder.indexOf(b));
+                                const firstRepo = orderedChosen[0];
                                 // Initialize progress state and clear per-repo logs
-                                setProgress(chosen.map(repo => ({
+                                setProgress(orderedChosen.map(repo => ({
                                   repo,
                                   steps: [
                                     { label: 'Checkout master', status: 'pending' },
@@ -525,6 +529,11 @@ export const App: React.FC = () => {
                                   ]
                                 })));
                                 setRepoLogs({});
+                                // Pre-mark only the first repo's first step as running
+                                setProgress(prev => prev.map(p => p.repo === firstRepo ? ({
+                                  ...p,
+                                  steps: p.steps.map((s, i) => i === 0 ? { ...s, status: 'running' } : s)
+                                }) : p));
                                 // Start SSE for real-time progress
                                 let stopped = false;
                                 const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
@@ -620,6 +629,12 @@ export const App: React.FC = () => {
                                   stopped = true;
                                   eventSource.close();
                                 }, 30000); // auto-stop after 30 seconds
+                                // Trigger backend versioning with ordered repositories
+                                fetch(`${base}/api/versioning/start`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ repos: orderedChosen, deploymentFolderPath }),
+                                }).catch(() => { /* versioning request error */ });
                               } catch (e) {
                                 // Versioning start error
                               }
@@ -638,8 +653,12 @@ export const App: React.FC = () => {
                                 const base = apiBase || await detectApiBase();
                                 const chosen = Array.from(selected);
                                 if (!chosen.length) return;
+                                // Order by current visible list order (fallback to full repos list)
+                                const listOrder = (filtered && filtered.length ? filtered : repos);
+                                const orderedChosen = [...chosen].sort((a, b) => listOrder.indexOf(a) - listOrder.indexOf(b));
+                                const firstRepo = orderedChosen[0];
                                 // Initialize progress state and clear per-repo logs BEFORE backend request
-                                setProgress(chosen.map(repo => ({
+                                setProgress(orderedChosen.map(repo => ({
                                   repo,
                                   steps: [
                                     { label: 'Build', status: 'pending' },
@@ -647,11 +666,11 @@ export const App: React.FC = () => {
                                   ]
                                 })));
                                 // Pre-mark first step as running and seed log so UI shows immediately
-                                setProgress(prev => prev.map(p => p.repo && chosen.includes(p.repo) ? {
+                                setProgress(prev => prev.map(p => p.repo === firstRepo ? {
                                   ...p,
                                   steps: p.steps.map(s => s.label === 'Build' ? { ...s, status: 'running' } : s)
                                 } : p));
-                                setRepoLogs(Object.fromEntries(chosen.map(r => [r, ['Starting build...']])));
+                                setRepoLogs(firstRepo ? { [firstRepo]: ['Starting build...'] } : {});
                                 // Start SSE for real-time progress (before triggering backend)
                                 let stopped = false;
                                 const eventSource = new window.EventSource(`${base}/api/versioning/progress?mode=build-deploy`);
@@ -748,7 +767,7 @@ export const App: React.FC = () => {
                                 fetch(`${base}/api/versioning/build-deploy`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ repos: chosen, deployPath: deploymentFolderPath }),
+                                  body: JSON.stringify({ repos: orderedChosen, deployPath: deploymentFolderPath }),
                                 }).catch(() => { /* build-deploy request error */ });
                               } catch (e) {
                                 // Versioning start error
