@@ -48,6 +48,10 @@ export const App: React.FC = () => {
   const [deployRefreshKey, setDeployRefreshKey] = useState(0);
   // Debug response storage removed (unused)
 
+  // Add state for branch names and showBranchNames checkbox
+  const [branchNames, setBranchNames] = useState<Record<string, string>>({});
+  const [showBranchNames, setShowBranchNames] = useState(true);
+
   // Fetch repo list and versions when apiBase or firstBasePath changes
   useEffect(() => {
     if (!apiBase || !firstBasePath) return;
@@ -125,8 +129,6 @@ export const App: React.FC = () => {
     })();
     return () => { cancelled = true; };
   }, []);
-
-  // ...existing code...
 
   // Scan deployment folder for deployed versions (.war files) whenever path changes
   useEffect(() => {
@@ -309,6 +311,28 @@ export const App: React.FC = () => {
     if (val) setSelected(new Set(filtered)); else setSelected(new Set());
   }
 
+  // Fetch branch names for each repo at startup
+  useEffect(() => {
+    if (!apiBase || !firstBasePath || repos.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/api/debug/base?path=${encodeURIComponent(firstBasePath.replace(/\\/g, '/'))}`);
+        if (r.ok) {
+          const data = await r.json();
+          if (data && data.branchNames) {
+            console.log('[DEBUG] branchNames from backend:', data.branchNames);
+            console.log('[DEBUG] Repo list:', repos);
+            if (!cancelled) setBranchNames(data.branchNames);
+          }
+        }
+      } catch (e) {
+        console.log('[DEBUG] Error fetching branchNames for base', firstBasePath, e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiBase, firstBasePath, repos]);
+
   return (
     <>
       <header className="app-header">
@@ -420,6 +444,9 @@ export const App: React.FC = () => {
                     <span className="repo-legend-dot no-upgrade" />
                     <span>No upgrade (equal/older)</span>
                   </span>
+                  <label style={{ marginLeft: '1.5rem', fontWeight: 500 }}>
+                    <input type="checkbox" checked={showBranchNames} onChange={e => setShowBranchNames(e.target.checked)} /> Show Branch Names
+                  </label>
                 </div>
                 {missingVersions.length > 0 && (
                   <div className="repo-missing-versions">
@@ -431,12 +458,13 @@ export const App: React.FC = () => {
                 {!loading && !error && (
                   <div className="repo-progress-list">
                     <ProgressList progress={progress} repoLogs={repoLogs} />
-                    <RepoList repos={filtered} selected={selected} toggle={toggle} versions={versions} targetVersions={filterTargetVersions} deployVersions={deployVersions} showBothVersions />
+                    <RepoList repos={filtered} selected={selected} toggle={toggle} versions={versions} targetVersions={filterTargetVersions} deployVersions={deployVersions} showBothVersions branchNames={branchNames} showBranchNames={showBranchNames} />
                     {/* ...existing code... */}
                     {deployScanError && <div className="repo-deploy-error">Deploy scan error: {deployScanError}</div>}
                     <div className="repo-versioning-btns">
                       <button
                         className="btn btn-secondary"
+                        style={{ marginRight: '0.75rem' }}
                         disabled={selected.size === 0}
                         title={selected.size ? 'Checkout master for selected repos' : 'Select repos to enable'}
                         onClick={async () => {
@@ -576,6 +604,140 @@ export const App: React.FC = () => {
                           }
                         }}
                       >Start Versioning</button>
+                      <button
+                        className="btn btn-primary"
+                        disabled={selected.size === 0}
+                        title={selected.size ? 'Build & Deploy selected repos' : 'Select repos to enable'}
+                        onClick={async () => {
+                          try {
+                            const base = apiBase || await detectApiBase();
+                            const chosen = Array.from(selected);
+                            if (!chosen.length) return;
+                            setProgress(chosen.map(repo => ({
+                              repo,
+                              steps: [
+                                { label: 'Build', status: 'pending' },
+                                { label: 'Deploy WAR', status: 'pending' },
+                              ]
+                            })));
+                            setRepoLogs({});
+                            const eventSource = new window.EventSource(`${base}/api/versioning/progress?mode=build-deploy`);
+                            eventSource.onmessage = (event) => {
+                              try {
+                                const data = JSON.parse(event.data);
+                                if (!data || !data.repo || !data.step) return;
+                                setProgress(prev => prev.map(p => {
+                                  if (p.repo !== data.repo) return p;
+                                  const steps = p.steps.map(s => {
+                                    if (s.label === data.step) {
+                                      return {
+                                        ...s,
+                                        status: data.status || s.status,
+                                        detail: data.detail || s.detail,
+                                        stdout: data.stdout || s.stdout,
+                                        stderr: data.stderr || s.stderr,
+                                        warPath: data.warPath || s.warPath,
+                                        branch: data.branch || s.branch,
+                                      };
+                                    }
+                                    return s;
+                                  });
+                                  return {
+                                    ...p,
+                                    steps,
+                                    branch: data.branch || p.branch,
+                                    stdout: data.stdout || p.stdout,
+                                    stderr: data.stderr || p.stderr,
+                                    warPath: data.warPath || p.warPath,
+                                    deployError: data.detail || p.deployError
+                                  };
+                                }));
+                                if (data.stdout) {
+                                  let prevStdout = '';
+                                  setProgress(prev => {
+                                    const p = prev.find(x => x.repo === data.repo);
+                                    const prevStep = p?.steps.find(s => s.label === data.step);
+                                    prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
+                                    return prev;
+                                  });
+                                  let newLines: string[] = [];
+                                  if (data.stdout.length > prevStdout.length) {
+                                    const newPart = data.stdout.slice(prevStdout.length);
+                                    newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                  } else if (!prevStdout && data.stdout.length) {
+                                    newLines = data.stdout.split(/\r?\n/).filter(Boolean);
+                                  }
+                                  if (newLines.length) {
+                                    setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stdout] ${l}`)].slice(-800));
+                                    setRepoLogs(prev => {
+                                      const prevArr = prev[data.repo] || [];
+                                      return {
+                                        ...prev,
+                                        [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stdout] ${l}`)].slice(-200)
+                                      };
+                                    });
+                                  }
+                                }
+                                if (data.stderr) {
+                                  let prevStderr = '';
+                                  setProgress(prev => {
+                                    const p = prev.find(x => x.repo === data.repo);
+                                    const prevStep = p?.steps.find(s => s.label === data.step);
+                                    prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
+                                    return prev;
+                                  });
+                                  let newLines: string[] = [];
+                                  if (data.stderr.length > prevStderr.length) {
+                                    const newPart = data.stderr.slice(prevStderr.length);
+                                    newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                  } else if (!prevStderr && data.stderr.length) {
+                                    newLines = data.stderr.split(/\r?\n/).filter(Boolean);
+                                  }
+                                  if (newLines.length) {
+                                    setLogLines(prevLines => [...prevLines, ...newLines.map((l: string) => `[${data.repo}][${data.step}][stderr] ${l}`)].slice(-800));
+                                    setRepoLogs(prev => {
+                                      const prevArr = prev[data.repo] || [];
+                                      return {
+                                        ...prev,
+                                        [data.repo]: [...prevArr, ...newLines.map((l: string) => `[${data.step}][stderr] ${l}`)].slice(-200)
+                                      };
+                                    });
+                                  }
+                                }
+                              } catch (e) {
+                                // ignore parse errors
+                              }
+                            };
+                            eventSource.onerror = () => {
+                              eventSource.close();
+                            };
+                            // Start the process
+                            const res = await fetch(`${base}/api/versioning/build-deploy`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ repos: chosen, deploymentFolderPath })
+                            });
+                            if (!res.ok) {
+                              setLogLines(prev => [...prev, `[build-deploy] request failed status ${res.status}`]);
+                              eventSource.close();
+                              return;
+                            } else {
+                              try {
+                                setDeployRefreshKey(k => k + 1);
+                              } catch {/* ignore */ }
+                            }
+                          } catch (e: unknown) {
+                            let msg: string;
+                            if (typeof e === 'object' && e !== null && 'message' in e) {
+                              const m = (e as { message: unknown }).message;
+                              msg = typeof m === 'string' ? m : String(m);
+                            } else {
+                              msg = String(e);
+                            }
+                            setLogLines(prev => [...prev, `[build-deploy] error ${msg}`]);
+                          }
+                        }}
+                      >Build & Deploy</button>
                     </div>
                   </div>
                 )}

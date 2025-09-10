@@ -317,6 +317,26 @@ app.get('/api/debug/base', (req: Request, res: Response) => {
   included = Array.from(new Set(included));
   const optSoaPresent = fs.existsSync(path.join(base, 'opt-soa'));
   const forcedOptSoa = base === secondBase && optSoaPresent && !detected.includes('opt-soa');
+
+  // Branch name detection
+  const branchNames: Record<string, string> = {};
+  for (const repoName of included) {
+    let repoPath = path.join(base, repoName);
+    // opt-soa special case: if under second base, check opt-soa folder
+    if (repoName === 'opt-soa' && base === secondBase) {
+      repoPath = path.join(base, 'opt-soa');
+    }
+    const gitHeadPath = path.join(repoPath, '.git', 'HEAD');
+    if (fs.existsSync(gitHeadPath)) {
+      try {
+        const head = fs.readFileSync(gitHeadPath, 'utf8').trim();
+        const m = head.match(/^ref: refs\/heads\/(.+)$/);
+        if (m) branchNames[repoName] = m[1];
+        else branchNames[repoName] = head;
+      } catch { branchNames[repoName] = ''; }
+    }
+  }
+
   return res.json({
     base,
     exists,
@@ -328,7 +348,8 @@ app.get('/api/debug/base', (req: Request, res: Response) => {
     detectedGitChildren: detected,
     finalIncluded: included.sort(),
     forcedOptSoa,
-    optSoaPresent
+    optSoaPresent,
+    branchNames
   });
 });
 

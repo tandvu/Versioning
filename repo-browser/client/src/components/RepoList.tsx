@@ -9,7 +9,9 @@ export const RepoList: React.FC<{
   targetVersions?: Record<string, string>;
   deployVersions?: Record<string, string>;
   showBothVersions?: boolean;
-}> = ({ repos, selected, toggle, versions, targetVersions, deployVersions, showBothVersions }) => {
+  branchNames?: Record<string, string>;
+  showBranchNames?: boolean;
+}> = ({ repos, selected, toggle, versions, targetVersions, deployVersions, showBothVersions, branchNames, showBranchNames }) => {
   if (repos.length === 0) return <p style={{ opacity: 0.7 }}>No repos</p>;
   const _cmp = (a: string, b: string) => {
     const pa = a.split('.').map(n => parseInt(n, 10) || 0);
@@ -93,6 +95,19 @@ export const RepoList: React.FC<{
               />
               <span>{r}</span>
               {versionDisplay}
+              {showBranchNames && branchNames && branchNames[r] && (
+                <span
+                  style={{
+                    marginLeft: 8,
+                    fontSize: '0.7em',
+                    color: branchNames[r] === 'master' ? '#a3a3a3' : '#22c55e',
+                    fontWeight: 600,
+                    transition: 'color 0.2s',
+                  }}
+                >
+                  [{branchNames[r]}]
+                </span>
+              )}
             </label>
           </li>
         );
