@@ -30,7 +30,14 @@ export const App: React.FC = () => {
   // second base debug snapshot removed (unused)
   const [deployVersions, setDeployVersions] = useState<Record<string, string>>({});
   const [deployScanError, setDeployScanError] = useState<string | null>(null);
-  const [deploymentFolderPath, setDeploymentFolderPath] = useState<string>(DEFAULT_DEPLOY_PATH);
+  const [deploymentFolderPath, setDeploymentFolderPath] = useState<string>(() => {
+    try {
+      const saved = window.localStorage.getItem('deploymentFolderPath');
+      return saved || DEFAULT_DEPLOY_PATH;
+    } catch {
+      return DEFAULT_DEPLOY_PATH;
+    }
+  });
   const [showLogs, setShowLogs] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
   // Per-repo logs for current versioning run
@@ -264,6 +271,7 @@ export const App: React.FC = () => {
       }
     }
     setDeploymentFolderPath(DEFAULT_DEPLOY_PATH);
+    window.localStorage.setItem('deploymentFolderPath', DEFAULT_DEPLOY_PATH);
     setMissingVersions(missing);
     // Only include lines that had versions
     const withVersions = rawLines.filter(l => !missing.includes(l));
@@ -368,7 +376,16 @@ export const App: React.FC = () => {
           </small>
           <small className="app-small">
             <span className="app-label">Deployment Folder Path:</span>
-            <span>{DEFAULT_DEPLOY_PATH}</span>
+            <input
+              type="text"
+              value={deploymentFolderPath}
+              onChange={e => {
+                setDeploymentFolderPath(e.target.value);
+                window.localStorage.setItem('deploymentFolderPath', e.target.value);
+              }}
+              style={{ width: '32em', maxWidth: '100%', marginRight: '0.5em', fontSize: '0.95em', padding: '2px 6px' }}
+              placeholder={DEFAULT_DEPLOY_PATH}
+            />
             <button
               className="btn btn-outline btn-icon app-refresh-btn"
               title="Refresh deployed versions"
@@ -460,7 +477,7 @@ export const App: React.FC = () => {
                     <span>No upgrade (equal/older)</span>
                   </span>
                   <label style={{ marginLeft: '1.5rem', fontWeight: 500 }}>
-                    <input type="checkbox" checked={showBranchNames} onChange={e => setShowBranchNames(e.target.checked)} /> Show Branch Names
+                    <input type="checkbox" checked={showBranchNames} onChange={e => setShowBranchNames(e.target.checked)} /> Display Current Branch in Repo
                   </label>
                 </div>
                 {missingVersions.length > 0 && (
