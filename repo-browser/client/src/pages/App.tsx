@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { FaCopy, FaPaste, FaCheck } from 'react-icons/fa';
 // helper imports (resolveDeployVersion removed -unused)
 // @ts-expect-error media asset handled by bundler
 import copyVideo from '../video/Copy.mp4';
@@ -58,6 +59,53 @@ export const App: React.FC = () => {
   // Add state for branch names and showBranchNames checkbox
   const [branchNames, setBranchNames] = useState<Record<string, string>>({});
   const [showBranchNames, setShowBranchNames] = useState(true);
+  const [copiedPathAt, setCopiedPathAt] = useState<number>(0);
+  // Track current EventSource to close before starting a new run
+  const currentSseRef = useRef<EventSource | null>(null);
+  // Track last processed stdout/stderr lengths per repo+step to avoid duplicate log ingestion
+  const stdoutOffsetsRef = useRef<Record<string, number>>({});
+  const stderrOffsetsRef = useRef<Record<string, number>>({});
+  // Track last progress event time for stall detection
+  const lastEventAtRef = useRef<number>(0);
+  const stallWarnedRef = useRef<Record<string, boolean>>({}); // key: repo::step
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      // If more than 30000ms without events on a running step, append a warning once
+      setProgress(prev => {
+        const next = prev.map(p => ({ ...p }));
+        for (const rp of next) {
+          for (const st of rp.steps) {
+            if (st.status === 'running') {
+              const key = `${rp.repo}::${st.label}`;
+              if (!stallWarnedRef.current[key] && lastEventAtRef.current && (now - lastEventAtRef.current) > 30000) {
+                // Append warning to repo log
+                setRepoLogs(pr => {
+                  const r = { ...pr };
+                  if (!r[rp.repo]) r[rp.repo] = [];
+                  r[rp.repo] = [...r[rp.repo], `${ts()} (No output for 30s while '${st.label}' running — still waiting...)`];
+                  return r;
+                });
+                stallWarnedRef.current[key] = true;
+              }
+            }
+          }
+        }
+        return next;
+      });
+    }, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Format timestamp like [9:30:23]
+  function ts(): string {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    return `[${hh}:${mm}:${ss}.${ms}]`;
+  }
 
   // Fetch repo list and versions when apiBase or firstBasePath changes
   useEffect(() => {
@@ -400,26 +448,23 @@ export const App: React.FC = () => {
                   placeholder={DEFAULT_DEPLOY_PATH}
                 />
               </Tooltip>
-              <Tooltip content={'Paste the path of the Deployment Folder'} forceShow={false}>
+              <Tooltip content={'Paste clipboard path into Deployment Folder input'} forceShow={false}>
                 <button
                   type="button"
-                  title="Paste from clipboard"
+                  title="Paste path from clipboard"
                   aria-label="Paste deployment path from clipboard"
                   className="btn btn-icon"
                   onClick={async () => {
                     try {
                       const txt = await navigator.clipboard.readText();
-                      if (!txt) return;
-                      // Use the first non-empty line, trimmed
-                      const first = txt.split(/\r?\n/).map(s => s.trim()).find(Boolean) || '';
-                      if (!first) return;
-                      setDeploymentFolderPath(first);
-                      window.localStorage.setItem('deploymentFolderPath', first);
-                    } catch {
-                      // ignore clipboard errors
-                    }
+                      if (txt) {
+                        setDeploymentFolderPath(txt);
+                        window.localStorage.setItem('deploymentFolderPath', txt);
+                        setCopiedPathAt(Date.now()); // reuse timestamp state for success flash
+                      }
+                    } catch { /* ignore */ }
                   }}
-                >📋</button>
+                >{Date.now() - copiedPathAt < 2000 ? <FaCheck aria-hidden /> : <FaPaste aria-hidden />}</button>
               </Tooltip>
             </span>
           </small>
@@ -483,7 +528,7 @@ export const App: React.FC = () => {
                           if (txt) parseFilterInput(txt);
                         } catch { /* ignore clipboard errors (permissions, etc.) */ }
                       }}
-                    >📋 Paste</button>
+                    ><FaPaste aria-hidden style={{ marginRight: 6, position: 'relative', top: 1 }} />Paste</button>
                     <button className="btn btn-outline btn-full" onClick={() => { setFilter(''); setFilterNames(null); setMissingVersions([]); setDeploymentFolderPath(DEFAULT_DEPLOY_PATH); setSelected(new Set()); }}>Reset Filter</button>
                   </div>
                 </div>
@@ -575,7 +620,9 @@ export const App: React.FC = () => {
                                 }) : p));
                                 // Start SSE for real-time progress
                                 let stopped = false;
+                                if (currentSseRef.current) { try { currentSseRef.current.close(); } catch { /* ignore */ } }
                                 const eventSource = new window.EventSource(`${base}/api/versioning/progress`);
+                                currentSseRef.current = eventSource;
                                 eventSource.onmessage = (event) => {
                                   try {
                                     const data = JSON.parse(event.data);
@@ -613,61 +660,208 @@ export const App: React.FC = () => {
                                     }));
                                     // Add log lines for stdout/stderr to both global and per-repo logs
                                     // Only append new log lines for real-time build output
+                                    const canonicalStep = data.step === 'Deploy WAR(s)' ? 'Deploy WAR' : data.step;
                                     if (data.stdout) {
-                                      let prevStdout = '';
-                                      setProgress(prev => {
-                                        const p = prev.find(x => x.repo === data.repo);
-                                        const prevStep = p?.steps.find(s => s.label === data.step);
-                                        prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
-                                        return prev;
-                                      });
-                                      let newLines: string[] = [];
-                                      if (data.stdout.length > prevStdout.length) {
-                                        const newPart = data.stdout.slice(prevStdout.length);
-                                        newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                      const key = `${data.repo}::${canonicalStep}::stdout`;
+                                      const prevOffset = stdoutOffsetsRef.current[key] || 0;
+                                      if (data.stdout.length < prevOffset) {
+                                        // Reset (backend may have restarted)
+                                        stdoutOffsetsRef.current[key] = 0;
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
-                                      });
+                                      if (data.stdout.length > (stdoutOffsetsRef.current[key] || 0)) {
+                                        const newPart = data.stdout.slice(stdoutOffsetsRef.current[key] || 0);
+                                        stdoutOffsetsRef.current[key] = data.stdout.length;
+                                        let newLines = newPart.split(/\r?\n/).filter(Boolean).map((l: string) => `${ts()} ${l}`);
+                                        setLogLines(prev => {
+                                          const merged = [...prev];
+                                          for (const nl of newLines) {
+                                            if (merged.length === 0 || merged[merged.length - 1] !== nl) merged.push(nl);
+                                          }
+                                          return merged;
+                                        });
+                                        setRepoLogs(prev => {
+                                          const r = { ...prev };
+                                          if (!r[data.repo]) r[data.repo] = [];
+                                          const existing = r[data.repo];
+                                          for (const nl of newLines) {
+                                            if (existing.length === 0 || existing[existing.length - 1] !== nl) existing.push(nl);
+                                          }
+                                          return r;
+                                        });
+                                      }
                                     }
                                     if (data.stderr) {
-                                      let prevStderr = '';
-                                      setProgress(prev => {
-                                        const p = prev.find(x => x.repo === data.repo);
-                                        const prevStep = p?.steps.find(s => s.label === data.step);
-                                        prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
-                                        return prev;
-                                      });
-                                      let newLines: string[] = [];
-                                      if (data.stderr.length > prevStderr.length) {
-                                        const newPart = data.stderr.slice(prevStderr.length);
-                                        newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                      const key = `${data.repo}::${canonicalStep}::stderr`;
+                                      const prevOffset = stderrOffsetsRef.current[key] || 0;
+                                      if (data.stderr.length < prevOffset) {
+                                        stderrOffsetsRef.current[key] = 0;
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
-                                      });
+                                      if (data.stderr.length > (stderrOffsetsRef.current[key] || 0)) {
+                                        const newPart = data.stderr.slice(stderrOffsetsRef.current[key] || 0);
+                                        stderrOffsetsRef.current[key] = data.stderr.length;
+                                        let newLines = newPart.split(/\r?\n/).filter(Boolean).map((l: string) => `${ts()} ${l}`);
+                                        setLogLines(prev => {
+                                          const merged = [...prev];
+                                          for (const nl of newLines) {
+                                            if (merged.length === 0 || merged[merged.length - 1] !== nl) merged.push(nl);
+                                          }
+                                          return merged;
+                                        });
+                                        setRepoLogs(prev => {
+                                          const r = { ...prev };
+                                          if (!r[data.repo]) r[data.repo] = [];
+                                          const existing = r[data.repo];
+                                          for (const nl of newLines) {
+                                            if (existing.length === 0 || existing[existing.length - 1] !== nl) existing.push(nl);
+                                          }
+                                          return r;
+                                        });
+                                      }
                                     }
                                   } catch (e) {
                                     // Error parsing SSE data
                                   }
+                                  // Auto-advance: if a repo just finished all steps, start next pending repo
+                                  setProgress(prev => {
+                                    // Find completed repos and next pending
+                                    const next = [...prev];
+                                    for (let i = 0; i < next.length; i++) {
+                                      const rp = next[i];
+                                      const allDone = rp.steps.every(s => s.status === 'success');
+                                      if (allDone && !rp._advanced) {
+                                        (rp as any)._advanced = true; // mark so we don't re-trigger
+                                        // find next repo with all steps pending
+                                        for (let j = i + 1; j < next.length; j++) {
+                                          const nr = next[j];
+                                          const hasRunning = nr.steps.some(s => s.status === 'running');
+                                          if (!hasRunning && nr.steps.every(s => s.status === 'pending')) {
+                                            nr.steps[0].status = 'running';
+                                            break;
+                                          }
+                                        }
+                                      }
+                                    }
+                                    return next;
+                                  });
                                 };
                                 eventSource.onerror = (err) => {
                                   // SSE error
                                   stopped = true;
                                 };
-                                // Stop SSE on unmount or when versioning completes
-                                setTimeout(() => {
-                                  stopped = true;
-                                  eventSource.close();
-                                }, 30000); // auto-stop after 30 seconds
+                                // Close SSE when all repos completed
+                                const maybeClose = () => {
+                                  setProgress(prev => {
+                                    const allDone = prev.length > 0 && prev.every(p => p.steps.every(s => s.status === 'success' || s.status === 'error'));
+                                    if (allDone && !stopped) {
+                                      stopped = true;
+                                      try { eventSource.close(); } catch { /* ignore */ }
+                                    }
+                                    return prev;
+                                  });
+                                };
+                                eventSource.onmessage = (event) => {
+                                  lastEventAtRef.current = Date.now();
+                                  try {
+                                    const data = JSON.parse(event.data);
+                                    if (!data || !data.repo || !data.step) return;
+                                    setProgress(prev => prev.map(p => {
+                                      if (p.repo !== data.repo) return p;
+                                      const steps = p.steps.map(s => {
+                                        // Accept both 'Deploy WAR' and 'Deploy WAR(s)' as valid step labels
+                                        const stepMatch = (s.label === data.step) ||
+                                          (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') ||
+                                          (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR');
+                                        if (stepMatch) {
+                                          return {
+                                            ...s,
+                                            status: data.status || s.status,
+                                            detail: data.detail || s.detail,
+                                            stdout: data.stdout || s.stdout,
+                                            stderr: data.stderr || s.stderr,
+                                            warPath: data.warPath || s.warPath,
+                                            branch: data.branch || s.branch,
+                                          };
+                                        }
+                                        return s;
+                                      });
+                                      return {
+                                        ...p,
+                                        steps,
+                                        branch: data.branch || p.branch,
+                                        stdout: data.stdout || p.stdout,
+                                        stderr: data.stderr || p.stderr,
+                                        warPath: data.warPath || p.warPath,
+                                        deployError: data.detail || p.deployError
+                                      };
+                                    }));
+                                    // Add log lines for stdout/stderr to both global and per-repo logs
+                                    // Only append new log lines for real-time build output
+                                    const canonicalStep = data.step === 'Deploy WAR(s)' ? 'Deploy WAR' : data.step;
+                                    if (data.stdout) {
+                                      const key = `${data.repo}::${canonicalStep}::stdout`;
+                                      const prevOffset = stdoutOffsetsRef.current[key] || 0;
+                                      if (data.stdout.length < prevOffset) stdoutOffsetsRef.current[key] = 0;
+                                      if (data.stdout.length > (stdoutOffsetsRef.current[key] || 0)) {
+                                        const newPart = data.stdout.slice(stdoutOffsetsRef.current[key] || 0);
+                                        stdoutOffsetsRef.current[key] = data.stdout.length;
+                                        const newLines = newPart.split(/\r?\n/).filter(Boolean).map((l: string) => `${ts()} ${l}`);
+                                        setLogLines(prev => {
+                                          const merged = [...prev];
+                                          for (const nl of newLines) { if (merged.length === 0 || merged[merged.length - 1] !== nl) merged.push(nl); }
+                                          return merged;
+                                        });
+                                        setRepoLogs(prev => {
+                                          const r = { ...prev }; if (!r[data.repo]) r[data.repo] = [];
+                                          const existing = r[data.repo];
+                                          for (const nl of newLines) { if (existing.length === 0 || existing[existing.length - 1] !== nl) existing.push(nl); }
+                                          return r;
+                                        });
+                                      }
+                                    }
+                                    if (data.stderr) {
+                                      const key = `${data.repo}::${canonicalStep}::stderr`;
+                                      const prevOffset = stderrOffsetsRef.current[key] || 0;
+                                      if (data.stderr.length < prevOffset) stderrOffsetsRef.current[key] = 0;
+                                      if (data.stderr.length > (stderrOffsetsRef.current[key] || 0)) {
+                                        const newPart = data.stderr.slice(stderrOffsetsRef.current[key] || 0);
+                                        stderrOffsetsRef.current[key] = data.stderr.length;
+                                        const newLines = newPart.split(/\r?\n/).filter(Boolean).map((l: string) => `${ts()} ${l}`);
+                                        setLogLines(prev => {
+                                          const merged = [...prev];
+                                          for (const nl of newLines) { if (merged.length === 0 || merged[merged.length - 1] !== nl) merged.push(nl); }
+                                          return merged;
+                                        });
+                                        setRepoLogs(prev => {
+                                          const r = { ...prev }; if (!r[data.repo]) r[data.repo] = [];
+                                          const existing = r[data.repo];
+                                          for (const nl of newLines) { if (existing.length === 0 || existing[existing.length - 1] !== nl) existing.push(nl); }
+                                          return r;
+                                        });
+                                      }
+                                    }
+                                  } catch { /* ignore parse errors */ }
+                                  // Auto-advance logic retained below
+                                  setProgress(prev => {
+                                    const next = [...prev];
+                                    for (let i = 0; i < next.length; i++) {
+                                      const rp = next[i];
+                                      const allDone = rp.steps.every(s => s.status === 'success');
+                                      if (allDone && !rp._advanced) {
+                                        (rp as any)._advanced = true; // mark so we don't re-trigger
+                                        for (let j = i + 1; j < next.length; j++) {
+                                          const nr = next[j];
+                                          const hasRunning = nr.steps.some(s => s.status === 'running');
+                                          if (!hasRunning && nr.steps.every(s => s.status === 'pending')) {
+                                            nr.steps[0].status = 'running';
+                                            break;
+                                          }
+                                        }
+                                      }
+                                    }
+                                    return next;
+                                  });
+                                  maybeClose();
+                                };
                                 // Trigger backend versioning with ordered repositories
                                 fetch(`${base}/api/versioning/start`, {
                                   method: 'POST',
@@ -709,11 +903,14 @@ export const App: React.FC = () => {
                                   ...p,
                                   steps: p.steps.map(s => s.label === 'Build' ? { ...s, status: 'running' } : s)
                                 } : p));
-                                setRepoLogs(firstRepo ? { [firstRepo]: ['Starting build...'] } : {});
+                                setRepoLogs(firstRepo ? { [firstRepo]: [`${ts()} Starting build...`] } : {});
                                 // Start SSE for real-time progress (before triggering backend)
                                 let stopped = false;
+                                if (currentSseRef.current) { try { currentSseRef.current.close(); } catch { /* ignore */ } }
                                 const eventSource = new window.EventSource(`${base}/api/versioning/progress?mode=build-deploy`);
+                                currentSseRef.current = eventSource;
                                 eventSource.onmessage = (event) => {
+                                  lastEventAtRef.current = Date.now();
                                   try {
                                     const data = JSON.parse(event.data);
                                     // Build & Deploy SSE event
@@ -721,7 +918,10 @@ export const App: React.FC = () => {
                                     setProgress(prev => prev.map(p => {
                                       if (p.repo !== data.repo) return p;
                                       const steps = p.steps.map(s => {
-                                        if (s.label === data.step) {
+                                        const stepMatch = (s.label === data.step) ||
+                                          (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') ||
+                                          (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR');
+                                        if (stepMatch) {
                                           return {
                                             ...s,
                                             status: data.status || s.status,
@@ -734,7 +934,6 @@ export const App: React.FC = () => {
                                         }
                                         return s;
                                       });
-                                      // Attach extra info at top level for ProgressList
                                       return {
                                         ...p,
                                         steps,
@@ -747,61 +946,95 @@ export const App: React.FC = () => {
                                     }));
                                     // Add log lines for stdout/stderr to both global and per-repo logs
                                     // Only append new log lines for real-time build output
+                                    const canonicalStepBD = data.step === 'Deploy WAR(s)' ? 'Deploy WAR' : data.step;
                                     if (data.stdout) {
-                                      let prevStdout = '';
-                                      setProgress(prev => {
-                                        const p = prev.find(x => x.repo === data.repo);
-                                        const prevStep = p?.steps.find(s => s.label === data.step || (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') || (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR'));
-                                        prevStdout = typeof prevStep?.stdout === 'string' ? prevStep.stdout : '';
-                                        return prev;
-                                      });
-                                      let newLines: string[] = [];
-                                      if (data.stdout.length > prevStdout.length) {
-                                        const newPart = data.stdout.slice(prevStdout.length);
-                                        newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                      const key = `${data.repo}::${canonicalStepBD}::stdout`;
+                                      if (data.stdout.length < (stdoutOffsetsRef.current[key] || 0)) stdoutOffsetsRef.current[key] = 0;
+                                      if (data.stdout.length > (stdoutOffsetsRef.current[key] || 0)) {
+                                        const newPart = data.stdout.slice(stdoutOffsetsRef.current[key] || 0);
+                                        stdoutOffsetsRef.current[key] = data.stdout.length;
+                                        const newLines = newPart.split(/\r?\n/).filter(Boolean).map((l: string) => `${ts()} ${l}`);
+                                        setLogLines(prev => {
+                                          const merged = [...prev];
+                                          for (const nl of newLines) {
+                                            if (merged.length === 0 || merged[merged.length - 1] !== nl) merged.push(nl);
+                                          }
+                                          return merged;
+                                        });
+                                        setRepoLogs(prev => {
+                                          const r = { ...prev };
+                                          if (!r[data.repo]) r[data.repo] = [];
+                                          const existing = r[data.repo];
+                                          for (const nl of newLines) {
+                                            if (existing.length === 0 || existing[existing.length - 1] !== nl) existing.push(nl);
+                                          }
+                                          return r;
+                                        });
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
-                                      });
                                     }
                                     if (data.stderr) {
-                                      let prevStderr = '';
-                                      setProgress(prev => {
-                                        const p = prev.find(x => x.repo === data.repo);
-                                        const prevStep = p?.steps.find(s => s.label === data.step || (s.label === 'Deploy WAR' && data.step === 'Deploy WAR(s)') || (s.label === 'Deploy WAR(s)' && data.step === 'Deploy WAR'));
-                                        prevStderr = typeof prevStep?.stderr === 'string' ? prevStep.stderr : '';
-                                        return prev;
-                                      });
-                                      let newLines: string[] = [];
-                                      if (data.stderr.length > prevStderr.length) {
-                                        const newPart = data.stderr.slice(prevStderr.length);
-                                        newLines = newPart.split(/\r?\n/).filter(Boolean);
+                                      const key = `${data.repo}::${canonicalStepBD}::stderr`;
+                                      if (data.stderr.length < (stderrOffsetsRef.current[key] || 0)) stderrOffsetsRef.current[key] = 0;
+                                      if (data.stderr.length > (stderrOffsetsRef.current[key] || 0)) {
+                                        const newPart = data.stderr.slice(stderrOffsetsRef.current[key] || 0);
+                                        stderrOffsetsRef.current[key] = data.stderr.length;
+                                        const newLines = newPart.split(/\r?\n/).filter(Boolean).map((l: string) => `${ts()} ${l}`);
+                                        setLogLines(prev => {
+                                          const merged = [...prev];
+                                          for (const nl of newLines) {
+                                            if (merged.length === 0 || merged[merged.length - 1] !== nl) merged.push(nl);
+                                          }
+                                          return merged;
+                                        });
+                                        setRepoLogs(prev => {
+                                          const r = { ...prev };
+                                          if (!r[data.repo]) r[data.repo] = [];
+                                          const existing = r[data.repo];
+                                          for (const nl of newLines) {
+                                            if (existing.length === 0 || existing[existing.length - 1] !== nl) existing.push(nl);
+                                          }
+                                          return r;
+                                        });
                                       }
-                                      setLogLines(prev => [...prev, ...newLines]);
-                                      setRepoLogs(prev => {
-                                        const r = { ...prev };
-                                        if (!r[data.repo]) r[data.repo] = [];
-                                        r[data.repo] = [...r[data.repo], ...newLines];
-                                        return r;
-                                      });
                                     }
                                   } catch (e) {
                                     // Error parsing SSE data
                                   }
+                                  // Auto-advance for Build & Deploy
+                                  setProgress(prev => {
+                                    const next = [...prev];
+                                    for (let i = 0; i < next.length; i++) {
+                                      const rp = next[i];
+                                      const allDone = rp.steps.every(s => s.status === 'success');
+                                      if (allDone && !rp._advanced) {
+                                        (rp as any)._advanced = true;
+                                        for (let j = i + 1; j < next.length; j++) {
+                                          const nr = next[j];
+                                          const hasRunning = nr.steps.some(s => s.status === 'running');
+                                          if (!hasRunning && nr.steps.every(s => s.status === 'pending')) {
+                                            nr.steps[0].status = 'running';
+                                            break;
+                                          }
+                                        }
+                                      }
+                                    }
+                                    return next;
+                                  });
                                 };
                                 eventSource.onerror = (err) => {
                                   // SSE error
                                   stopped = true;
                                 };
-                                // Stop SSE after a longer window to allow build to finish
-                                setTimeout(() => {
-                                  stopped = true;
-                                  eventSource.close();
-                                }, 600000); // auto-stop after 10 minutes
+                                // Auto close when all repos complete
+                                const maybeCloseBD = () => {
+                                  setProgress(prev => {
+                                    const allDone = prev.length > 0 && prev.every(p => p.steps.every(s => s.status === 'success' || s.status === 'error'));
+                                    if (allDone && !stopped) { stopped = true; try { eventSource.close(); } catch { /* ignore */ } }
+                                    return prev;
+                                  });
+                                };
+                                // Attach close check after each progress update
+                                eventSource.addEventListener('message', () => maybeCloseBD());
                                 // Trigger backend build & deploy (fire-and-forget)
                                 fetch(`${base}/api/versioning/build-deploy`, {
                                   method: 'POST',

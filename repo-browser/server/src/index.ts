@@ -43,10 +43,15 @@ app.get('/api/versioning/progress', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
   res.write('retry: 2000\n\n');
+  // Heartbeat keep-alive every 15s so intermediaries don't close the stream
+  const heartbeat = setInterval(() => {
+    try { res.write(':ka\n\n'); } catch { /* ignore */ }
+  }, 15000);
   sseClients.push(res);
   req.on('close', () => {
     const idx = sseClients.indexOf(res);
     if (idx !== -1) sseClients.splice(idx, 1);
+    clearInterval(heartbeat);
   });
 });
 

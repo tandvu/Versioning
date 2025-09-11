@@ -6,7 +6,7 @@ const LiveLogPanel: React.FC<LiveLogPanelProps> = ({ lines }) => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [lines]);
+  }, [lines.length]);
   const filtered = lines
     .filter(line => {
       // Remove Browserslist and update-db lines
@@ -31,6 +31,9 @@ const LiveLogPanel: React.FC<LiveLogPanelProps> = ({ lines }) => {
       let l = line.replace(buildPrefix, '');
       l = l.replace(buildPrefixNoTime, '');
       l = l.replace(deployPrefix, '');
+      // Strip ANSI color codes and normalize problematic symbols (heavy check mark) to plain text
+      l = l.replace(/\x1b\[[0-9;]*m/g, '');
+      l = l.replace(/[\u2714\u2705]/g, 'OK');
       return l;
     })
     .filter(line => line.trim() !== '');
@@ -42,7 +45,8 @@ const LiveLogPanel: React.FC<LiveLogPanelProps> = ({ lines }) => {
     </div>
   );
 };
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { FaCopy, FaCheck } from 'react-icons/fa';
 
 export interface ProgressStep {
   label: string;
@@ -62,6 +66,8 @@ export interface RepoProgress {
   stderr?: string;
   warPath?: string;
   deployError?: string;
+  // internal flag for auto-advance (not persisted)
+  _advanced?: boolean;
 }
 
 interface ProgressListProps {
@@ -71,9 +77,18 @@ interface ProgressListProps {
 
 export const ProgressList: React.FC<ProgressListProps> = ({ progress, repoLogs }) => {
   const [expandedRepos, setExpandedRepos] = React.useState<Record<string, boolean>>({});
+  const [copiedRepos, setCopiedRepos] = useState<Record<string, number>>({}); // timestamp of last copy per repo
   const handleToggle = (repo: string) => {
     setExpandedRepos(prev => ({ ...prev, [repo]: !prev[repo] }));
   };
+  function copyLog(repo: string) {
+    const lines = repoLogs && repoLogs[repo] ? repoLogs[repo] : [];
+    if (!lines.length) return;
+    try {
+      navigator.clipboard.writeText(lines.join('\n'));
+      setCopiedRepos(prev => ({ ...prev, [repo]: Date.now() }));
+    } catch { /* ignore */ }
+  }
   return (
     <div style={{ margin: '1rem 0', background: '#181e2a', borderRadius: 8, padding: 12, border: '1px solid #2d3642' }}>
       <h4 style={{ margin: '0 0 .5rem 0', fontSize: 15 }}>Build & Deploy Progress</h4>
@@ -82,6 +97,7 @@ export const ProgressList: React.FC<ProgressListProps> = ({ progress, repoLogs }
           const isActive = item.steps.some(s => s.status === 'running');
           const isDone = item.steps.length > 0 && item.steps.every(s => s.status === 'success');
           const isExpanded = !!expandedRepos[item.repo];
+          const copiedRecently = copiedRepos[item.repo] && Date.now() - copiedRepos[item.repo] < 2000;
           return (
             <li key={item.repo} style={{ marginBottom: 18 }}>
               <div style={{ fontWeight: 600, color: '#facc15', fontSize: 18, display: 'flex', alignItems: 'center' }}>
@@ -136,8 +152,24 @@ export const ProgressList: React.FC<ProgressListProps> = ({ progress, repoLogs }
                   </div>
                   {/* Right column: live log */}
                   <div style={{ flex: 1, minWidth: 320 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                      <span style={{ fontWeight: 500, color: '#a5b4fc', fontSize: 16 }}>{'Live Log'}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4, gap: 8 }}>
+                      <span style={{ fontWeight: 500, color: '#a5b4fc', fontSize: 16 }}>Live Log</span>
+                      <button
+                        onClick={() => copyLog(item.repo)}
+                        title="Copy Live Log to clipboard"
+                        aria-label="Copy Live Log to clipboard"
+                        style={{
+                          background: 'none',
+                          border: '1px solid #374151',
+                          color: '#a5b4fc',
+                          cursor: 'pointer',
+                          borderRadius: 4,
+                          padding: '2px 6px',
+                          fontSize: 14,
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                      >{copiedRecently ? <FaCheck aria-hidden /> : <FaCopy aria-hidden />}</button>
                     </div>
                     <LiveLogPanel lines={repoLogs && repoLogs[item.repo] ? repoLogs[item.repo] : []} />
                   </div>
