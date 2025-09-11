@@ -95,7 +95,7 @@ export const ProgressList: React.FC<ProgressListProps> = ({ progress, repoLogs }
       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
         {progress.map((item, idx) => {
           const isActive = item.steps.some(s => s.status === 'running');
-          const isDone = item.steps.length > 0 && item.steps.every(s => s.status === 'success');
+          const isDone = item.steps.length > 0 && item.steps.every(s => s.status === 'success' || s.status === 'error');
           const isExpanded = !!expandedRepos[item.repo];
           const copiedRecently = copiedRepos[item.repo] && Date.now() - copiedRepos[item.repo] < 2000;
           return (
