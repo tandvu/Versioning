@@ -80,3 +80,6 @@ These set SERVE_CLIENT=1 so the server also serves the built React app (SPA fall
 - Duplicate names (if any) are de-duplicated by name.
 
 See `README_DEV.md` for extended development details.
+
+## User Guide
+- For end‑user usage instructions (running the packaged ZIP, changing ports, live logs, troubleshooting), see `USER_GUIDE.md`.

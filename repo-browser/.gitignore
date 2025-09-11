@@ -6,6 +6,7 @@ node_modules/
 standalone/server/dist/
 build/*.zip
 build/*.exe
+*.zip
 
 # Vite / client build
 client/dist/

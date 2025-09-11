@@ -93,9 +93,18 @@ What’s included
 Notes
 - No source maps included.
 - You can change PORT in Start-App.bat.
+ - See USER_GUIDE.md for full usage instructions.
 "@
 Set-Content -Path (Join-Path $Stage "Start-App.bat") -Value $StartBat -NoNewline
 Set-Content -Path (Join-Path $Stage "README.txt") -Value $Readme -NoNewline
+
+# Optionally include user-facing guides if present
+foreach ($doc in @("USER_GUIDE.md", "README_DISTRIBUTION.md")) {
+  $src = Join-Path $Root $doc
+  if (Test-Path $src) {
+    Copy-Item -Force $src (Join-Path $Stage $doc)
+  }
+}
 
 # 4) Zip it
 $ZipName = "repo-browser-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".zip"

@@ -13,3 +13,4 @@ What’s included
 Notes
 - No source maps included.
 - You can change PORT in Start-App.bat.
+ - See USER_GUIDE.md for full usage instructions.
