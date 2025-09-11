@@ -23,7 +23,10 @@ const defaultConfig = {
     }
 };
 // Runtime config file (JSON) created/updated when user edits settings.
-const runtimeConfigPath = path.resolve(process.cwd(), 'server', 'config.runtime.json');
+// process.cwd() when running workspace script (npm --workspace server) is already the server directory,
+// so we write directly inside that directory (avoid duplicating '/server/server').
+const runtimeConfigPath = path.resolve(process.cwd(), 'config.runtime.json');
+console.log('[config] Runtime config path:', runtimeConfigPath);
 function loadRuntime() {
     try {
         if (fs.existsSync(runtimeConfigPath)) {
@@ -44,12 +47,15 @@ function mergeConfig(base, override) {
         ignore: override.ignore ? override.ignore : base.ignore
     };
 }
+// Merge runtime overrides (if any); no forced reordering so first path (user selection) persists across restarts.
 export const config = mergeConfig(defaultConfig, loadRuntime());
 export function updateConfig(newCfg) {
     // Mutate exported object to keep references alive
     config.basePaths.splice(0, config.basePaths.length, ...newCfg.basePaths);
     config.ignore = newCfg.ignore || {};
     try {
+        // Ensure directory exists (in case process.cwd changes in future)
+        fs.mkdirSync(path.dirname(runtimeConfigPath), { recursive: true });
         fs.writeFileSync(runtimeConfigPath, JSON.stringify({
             basePaths: config.basePaths,
             ignore: config.ignore

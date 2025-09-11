@@ -98,7 +98,8 @@ Set-Content -Path (Join-Path $Stage "Start-App.bat") -Value $StartBat -NoNewline
 Set-Content -Path (Join-Path $Stage "README.txt") -Value $Readme -NoNewline
 
 # 4) Zip it
-$ZipPath = Join-Path $Root ("repo-browser-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".zip")
+$ZipName = "repo-browser-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".zip"
+$ZipPath = Join-Path $Root $ZipName
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory($Stage, $ZipPath)

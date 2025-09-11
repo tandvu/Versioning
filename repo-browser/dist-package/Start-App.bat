@@ -1,6 +1,7 @@
 @echo off
 setlocal
 set SERVE_CLIENT=1
+set NODE_ENV=production
 set PORT=5055
 pushd "%~dp0runtime\server"
 node dist\index.js
