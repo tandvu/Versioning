@@ -896,7 +896,8 @@ export const App: React.FC = () => {
                                   steps: [
                                     { label: 'Build', status: 'pending' },
                                     { label: 'Deploy WAR', status: 'pending' },
-                                  ]
+                                  ],
+                                  statusIcon: undefined
                                 })));
                                 // Pre-mark first step as running and seed log so UI shows immediately
                                 setProgress(prev => prev.map(p => p.repo === firstRepo ? {
@@ -941,7 +942,8 @@ export const App: React.FC = () => {
                                         stdout: data.stdout || p.stdout,
                                         stderr: data.stderr || p.stderr,
                                         warPath: data.warPath || p.warPath,
-                                        deployError: data.detail || p.deployError
+                                        deployError: data.detail || p.deployError,
+                                        statusIcon: data.statusIcon !== undefined ? data.statusIcon : p.statusIcon
                                       };
                                     }));
                                     // Add log lines for stdout/stderr to both global and per-repo logs

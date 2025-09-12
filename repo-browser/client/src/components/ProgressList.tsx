@@ -66,6 +66,7 @@ export interface RepoProgress {
   stderr?: string;
   warPath?: string;
   deployError?: string;
+  statusIcon?: string; // '✔' or '✗' from backend
   // internal flag for auto-advance (not persisted)
   _advanced?: boolean;
 }
@@ -96,13 +97,18 @@ export const ProgressList: React.FC<ProgressListProps> = ({ progress, repoLogs }
         {progress.map((item, idx) => {
           const isActive = item.steps.some(s => s.status === 'running');
           const isDone = item.steps.length > 0 && item.steps.every(s => s.status === 'success' || s.status === 'error');
+          const isError = item.steps.some(s => s.status === 'error');
           const isExpanded = !!expandedRepos[item.repo];
           const copiedRecently = copiedRepos[item.repo] && Date.now() - copiedRepos[item.repo] < 2000;
           return (
             <li key={item.repo} style={{ marginBottom: 18 }}>
               <div style={{ fontWeight: 600, color: '#facc15', fontSize: 18, display: 'flex', alignItems: 'center' }}>
                 <span style={{ marginRight: 8 }}>{idx + 1}.</span> {item.repo}
-                {isDone && <span style={{ marginLeft: 8, color: '#facc15', fontSize: 18 }}>✔️</span>}
+                {isDone && (
+                  <span style={{ marginLeft: 8, color: isError ? '#f87171' : '#34d399', fontSize: 18 }}>
+                    {item.statusIcon === '✗' || isError ? '❌' : '✔️'}
+                  </span>
+                )}
                 {isDone && (
                   <button
                     style={{ marginLeft: 12, fontSize: 13, color: '#a5b4fc', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}

@@ -592,82 +592,155 @@ app.post('/api/versioning/build-deploy', express.json(), async (req: Request, re
     let warPath = null;
     let deployOk = false;
     let deployError = null;
+    let warCandidates: string[] = [];
     try {
       // Build step
-      let buildCmd: string;
-      let buildArgs: string[];
       let buildCwd: string = repoDir;
       if (repo.toLowerCase() === 'opt-soa') {
         buildCwd = path.join(repoDir, 'SOA');
         sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ mvn clean install` });
-        buildCmd = process.platform === 'win32' ? 'mvn.cmd' : 'mvn';
-        buildArgs = ['clean', 'install'];
+        const buildCmd = process.platform === 'win32' ? 'mvn.cmd' : 'mvn';
+        const buildArgs = ['clean', 'install'];
+        const child = spawn(buildCmd, buildArgs, { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', d => {
+          stdout += d.toString();
+          sendSseEvent({ repo, step: 'Build', status: 'running', stdout });
+        });
+        child.stderr.on('data', d => {
+          stderr += d.toString();
+          sendSseEvent({ repo, step: 'Build', status: 'running', stderr });
+        });
+        const buildResult = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+          child.on('close', code => resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() }));
+          child.on('error', err => resolve({ code: -1, stdout, stderr: String(err) }));
+        });
+        pushDebug(`[build-deploy] ${repo}: build exit code=${buildResult.code}`);
+        if (buildResult.stdout) pushDebug(`[build-deploy] ${repo}: build stdout=\n${buildResult.stdout}`);
+        if (buildResult.stderr) pushDebug(`[build-deploy] ${repo}: build stderr=\n${buildResult.stderr}`);
+        steps.push({ cmd: `${buildCmd} ${buildArgs.join(' ')}`, code: buildResult.code, stdout: buildResult.stdout, stderr: buildResult.stderr });
+        buildOk = buildResult.code === 0;
+        sendSseEvent({ repo, step: 'Build', status: buildOk ? 'success' : 'error', stdout: buildResult.stdout, stderr: buildResult.stderr });
       } else {
-        sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ npm run build` });
-        // Use full path to npm.cmd for Windows
-        buildCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npm.cmd' : 'npm';
-        buildArgs = ['run', 'build'];
-      }
-      const child = spawn(buildCmd, buildArgs, { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      // Stream live logs via SSE while build runs
-      child.stdout.on('data', d => {
-        stdout += d.toString();
-        sendSseEvent({ repo, step: 'Build', status: 'running', stdout });
-      });
-      child.stderr.on('data', d => {
-        stderr += d.toString();
-        sendSseEvent({ repo, step: 'Build', status: 'running', stderr });
-      });
-      const buildResult = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
-        child.on('close', code => resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() }));
-        child.on('error', err => resolve({ code: -1, stdout, stderr: String(err) }));
-      });
-      pushDebug(`[build-deploy] ${repo}: build exit code=${buildResult.code}`);
-      if (buildResult.stdout) pushDebug(`[build-deploy] ${repo}: build stdout=\n${buildResult.stdout}`);
-      if (buildResult.stderr) pushDebug(`[build-deploy] ${repo}: build stderr=\n${buildResult.stderr}`);
-      steps.push({ cmd: `${buildCmd} ${buildArgs.join(' ')}`, code: buildResult.code, stdout: buildResult.stdout, stderr: buildResult.stderr });
-      buildOk = buildResult.code === 0;
-      sendSseEvent({ repo, step: 'Build', status: buildOk ? 'success' : 'error', stdout: buildResult.stdout, stderr: buildResult.stderr });
-      // Find WAR file
-      let warCandidates: string[] = [];
-      if (buildOk) {
-        let warDir: string | undefined;
-        if (repo.toLowerCase() === 'opt-soa') {
-          warDir = path.join(repoDir, 'SOA', 'target');
-        } else {
-          warDir = path.join(repoDir, 'target');
-        }
-        if (warDir && fs.existsSync(warDir)) {
-          const allWars = fs.readdirSync(warDir).filter(f => f.endsWith('.war'));
-          if (allWars.length > 0) {
-            // Only deploy the latest WAR by version for the repo
-            const versionPattern = /^(.*)-(\d+\.\d+\.\d+)(?:[^\d].*)?\.war$/;
-            let latestWar: string | undefined;
-            let latestVersion: string | undefined;
-            for (const war of allWars) {
-              const m = war.match(versionPattern);
-              if (m) {
-                const [, base, ver] = m;
-                if (!latestVersion || compareVersions(ver, latestVersion) > 0) {
-                  latestVersion = ver;
-                  latestWar = war;
-                }
+        sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ npm install react-scripts --save-dev\n$ npm install --legacy-peer-deps\n$ npx install-peerdeps --dev eslint-config-react-app --force --legacy-peer-deps\n$ npx react-scripts build\n$ npx gulp war` });
+        // Helper to run a child process with timeout and error handling
+        async function runStep(cmd: string, args: string[], opts: any, stepName: string, timeoutMs = 600000) {
+          return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+            const child = spawn(cmd, args, opts);
+            let stdout = '';
+            let stderr = '';
+            let finished = false;
+            const timeout = setTimeout(() => {
+              if (!finished) {
+                finished = true;
+                try { child.kill('SIGKILL'); } catch { }
+                stderr += `\n[ERROR] Timeout after ${timeoutMs / 1000}s`;
+                sendSseEvent({ repo, step: stepName, status: 'error', stderr });
+                resolve({ code: -2, stdout, stderr });
               }
+            }, timeoutMs);
+            child.stdout.on('data', d => {
+              stdout += d.toString();
+              sendSseEvent({ repo, step: stepName, status: 'running', stdout });
+            });
+            child.stderr.on('data', d => {
+              stderr += d.toString();
+              sendSseEvent({ repo, step: stepName, status: 'running', stderr });
+            });
+            child.on('close', code => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timeout);
+                resolve({ code: typeof code === 'number' ? code : -1, stdout, stderr });
+              }
+            });
+            child.on('error', err => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timeout);
+                stderr += `\n[ERROR] ${err?.message || err}`;
+                sendSseEvent({ repo, step: stepName, status: 'error', stderr });
+                resolve({ code: -1, stdout, stderr });
+              }
+            });
+          });
+        }
+        const npxCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npx.cmd' : 'npx';
+        const npmCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npm.cmd' : 'npm';
+        // 1. Peer deps
+        let peerDepsResult = await runStep(npxCmd, ['install-peerdeps', '--dev', 'eslint-config-react-app', '--force', '--legacy-peer-deps'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install peer deps');
+        if (peerDepsResult.code !== 0) {
+          sendSseEvent({ repo, step: 'Install peer deps fallback', status: 'running', stdout: 'Falling back to direct npm install of eslint-config-react-app and eslint@^8.0.0' });
+          peerDepsResult = await runStep(npmCmd, ['install', 'eslint-config-react-app', 'eslint@^8.0.0', '--save-dev', '--force', '--legacy-peer-deps'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install peer deps fallback');
+        }
+        // 2. eslint-config-react-app
+        const eslintConfigResult: { code: number; stdout: string; stderr: string } = await runStep(npmCmd, ['install', 'eslint-config-react-app', '--save-dev', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install eslint-config-react-app');
+        // 3. react-scripts
+        const reactScriptsResult: { code: number; stdout: string; stderr: string } = await runStep(npmCmd, ['install', 'react-scripts', '--save-dev', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install react-scripts');
+        // 4. npm install
+        const installResult: { code: number; stdout: string; stderr: string } = await runStep(npmCmd, ['install', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install');
+        // 5. react-scripts build
+        // Check for eslint-config-react-app in node_modules before build
+        const eslintConfigPath = path.join(buildCwd, 'node_modules', 'eslint-config-react-app');
+        if (!fs.existsSync(eslintConfigPath)) {
+          sendSseEvent({ repo, step: 'Build', status: 'error', stderr: 'eslint-config-react-app not found in node_modules. Build aborted.' });
+          pushDebug(`[build-deploy] ${repo}: eslint-config-react-app missing in node_modules, aborting build.`);
+          // Extra logging for troubleshooting
+          try {
+            const nodeModules = fs.readdirSync(path.join(buildCwd, 'node_modules'));
+            pushDebug(`[build-deploy] ${repo}: node_modules contents: ${JSON.stringify(nodeModules)}`);
+          } catch (e) {
+            let errMsg = 'unknown error';
+            if (e && typeof e === 'object' && 'message' in e) {
+              errMsg = (e as any).message;
+            } else if (typeof e === 'string') {
+              errMsg = e;
             }
-            if (latestWar) {
-              warCandidates = [path.join(warDir, latestWar)];
-            }
+            pushDebug(`[build-deploy] ${repo}: failed to read node_modules: ${errMsg}`);
+          }
+          pushDebug(`[build-deploy] ${repo}: peerDepsResult.code=${peerDepsResult.code}, eslintConfigResult.code=${eslintConfigResult.code}, reactScriptsResult.code=${reactScriptsResult.code}, installResult.code=${installResult.code}`);
+          pushDebug(`[build-deploy] ${repo}: peerDepsResult.stderr=${peerDepsResult.stderr}`);
+          pushDebug(`[build-deploy] ${repo}: eslintConfigResult.stderr=${eslintConfigResult.stderr}`);
+          pushDebug(`[build-deploy] ${repo}: reactScriptsResult.stderr=${reactScriptsResult.stderr}`);
+          pushDebug(`[build-deploy] ${repo}: installResult.stderr=${installResult.stderr}`);
+          buildOk = false;
+          // Skip build and gulp war
+          var buildResult = { code: -1, stdout: '', stderr: 'eslint-config-react-app missing' };
+          var gulpResult = { code: -1, stdout: '', stderr: 'Build not run due to missing eslint-config-react-app' };
+        } else {
+          // 5. react-scripts build
+          const buildResult: { code: number; stdout: string; stderr: string } = await runStep(npxCmd, ['react-scripts', 'build'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'react-scripts build');
+          // Always install gulp before running gulp war
+          const gulpInstallResult: { code: number; stdout: string; stderr: string } = await runStep(npmCmd, ['install', 'gulp', '--save-dev', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install gulp');
+          // 6. gulp war
+          const gulpResult: { code: number; stdout: string; stderr: string } = await runStep(npxCmd, ['gulp', 'war'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'gulp war');
+          // If any step failed, set buildOk = false
+          buildOk = [peerDepsResult, eslintConfigResult, reactScriptsResult, installResult, buildResult, gulpInstallResult, gulpResult].every((r: { code: number }) => r.code === 0);
+          if (!buildOk) {
+            pushDebug(`[build-deploy] ${repo}: One or more build steps failed. Codes: peerDeps=${peerDepsResult.code}, eslintConfig=${eslintConfigResult.code}, reactScripts=${reactScriptsResult.code}, install=${installResult.code}, build=${buildResult.code}, gulpInstall=${gulpInstallResult.code}, gulp=${gulpResult.code}`);
           }
         }
+        // ...existing code...
       }
-      if (!buildOk) {
-        pushDebug(`[build-deploy] ${repo}: build failed, skipping deploy step.`);
+      // Find WAR file
+      let warDir: string | undefined;
+      if (repo.toLowerCase() === 'opt-soa') {
+        warDir = path.join(repoDir, 'SOA', 'target');
+      } else {
+        warDir = path.join(repoDir, 'target');
+      }
+      if (warDir && fs.existsSync(warDir)) {
+        const allWars = fs.readdirSync(warDir).filter(f => f.endsWith('.war'));
+        if (allWars.length > 0) {
+          warCandidates = allWars.map(war => path.join(warDir!, war));
+        }
       }
       if (warCandidates.length > 0) {
         sendSseEvent({ repo, step: 'Build', status: 'success', warPath: warCandidates.join(', ') });
       }
+      // Deploy WAR file with narrated, gradual SSE messages
+      // ...existing deploy logic...
       // Deploy WAR file with narrated, gradual SSE messages
       {
         let deployStdout = '';
@@ -716,7 +789,9 @@ app.post('/api/versioning/build-deploy', express.json(), async (req: Request, re
       const ok = steps.every(s => s.code === 0) && buildOk && deployOk;
       const combinedStdout = steps.map(s => `# ${s.cmd}\n${s.stdout || ''}`).filter(Boolean).join('\n');
       const combinedStderr = steps.map(s => s.stderr && `# ${s.cmd}\n${s.stderr || ''}`).filter(Boolean).join('\n');
-      results.push({ repo, ok, steps, stdout: combinedStdout, stderr: combinedStderr, buildOk, warPath, deployOk, deployError });
+      // Add statusIcon: '✔' for success, '✗' for failure (if either build or deploy failed)
+      const statusIcon = (buildOk && deployOk) ? '✔' : '✗';
+      results.push({ repo, ok, steps, stdout: combinedStdout, stderr: combinedStderr, buildOk, warPath, deployOk, deployError, statusIcon });
       pushDebug(`[build-deploy] ${repo}: ok=${ok} buildOk=${buildOk} deployOk=${deployOk}`);
     } catch (e: any) {
       const errMsg = e?.message || 'unknown error';
