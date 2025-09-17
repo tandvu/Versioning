@@ -16,7 +16,12 @@
     "build": "npm run build --workspace server && npm run build --workspace client",
     "start:prod": "npm run start:client --workspace server",
     "build-and-start": "npm run build && npm run start:prod",
-    "package:zip": "powershell -ExecutionPolicy Bypass -File ./package.ps1"
+    "package:zip": "powershell -ExecutionPolicy Bypass -File ./package.ps1",
+    "docker:build": "docker build -t repo-browser .",
+    "docker:run": "docker run -p 3001:3001 repo-browser",
+    "docker:dev": "docker-compose up --build",
+    "docker:stop": "docker-compose down",
+    "docker:clean": "docker system prune -f && docker image prune -f"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

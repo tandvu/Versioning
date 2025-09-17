@@ -626,7 +626,17 @@ app.post('/api/versioning/build-deploy', express.json(), async (req, res) => {
     pushDebug(`[build-deploy] process.env.PATH: ${process.env.PATH}`);
     const body = req.body || {};
     const repos = Array.isArray(body.repos) ? body.repos.filter((r) => typeof r === 'string' && r.trim()) : [];
-    const deployFolder = body.deployPath || 'C:/OPT/jboss-eap-8.0.5/standalone/deployments';
+    const deployFolder = body.deployPath || process.env.DEPLOYMENT_PATH || '/app/deployments';
+    // Ensure deployment directory exists
+    if (!fs.existsSync(deployFolder)) {
+        try {
+            fs.mkdirSync(deployFolder, { recursive: true });
+            pushDebug(`[build-deploy] Created deployment directory: ${deployFolder}`);
+        }
+        catch (e) {
+            pushDebug(`[build-deploy] Failed to create deployment directory: ${e}`);
+        }
+    }
     pushDebug(`[build-deploy] endpoint called with repos: ${JSON.stringify(repos)}, deployPath: ${deployFolder}`);
     if (repos.length === 0)
         return res.status(400).json({ error: 'No repos provided' });
@@ -685,109 +695,171 @@ app.post('/api/versioning/build-deploy', express.json(), async (req, res) => {
                 sendSseEvent({ repo, step: 'Build', status: buildOk ? 'success' : 'error', stdout: buildResult.stdout, stderr: buildResult.stderr });
             }
             else {
-                sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ npm install react-scripts --save-dev\n$ npm install --legacy-peer-deps\n$ npx install-peerdeps --dev eslint-config-react-app --force --legacy-peer-deps\n$ npx react-scripts build\n$ npx gulp war` });
-                // Helper to run a child process with timeout and error handling
-                async function runStep(cmd, args, opts, stepName, timeoutMs = 600000) {
-                    return await new Promise((resolve) => {
-                        const child = spawn(cmd, args, opts);
-                        let stdout = '';
-                        let stderr = '';
-                        let finished = false;
-                        const timeout = setTimeout(() => {
-                            if (!finished) {
-                                finished = true;
-                                try {
-                                    child.kill('SIGKILL');
-                                }
-                                catch { }
-                                stderr += `\n[ERROR] Timeout after ${timeoutMs / 1000}s`;
-                                sendSseEvent({ repo, step: stepName, status: 'error', stderr });
-                                resolve({ code: -2, stdout, stderr });
-                            }
-                        }, timeoutMs);
-                        child.stdout.on('data', d => {
-                            stdout += d.toString();
-                            sendSseEvent({ repo, step: stepName, status: 'running', stdout });
-                        });
-                        child.stderr.on('data', d => {
-                            stderr += d.toString();
-                            sendSseEvent({ repo, step: stepName, status: 'running', stderr });
-                        });
-                        child.on('close', code => {
-                            if (!finished) {
-                                finished = true;
-                                clearTimeout(timeout);
-                                resolve({ code: typeof code === 'number' ? code : -1, stdout, stderr });
-                            }
-                        });
-                        child.on('error', err => {
-                            if (!finished) {
-                                finished = true;
-                                clearTimeout(timeout);
-                                stderr += `\n[ERROR] ${err?.message || err}`;
-                                sendSseEvent({ repo, step: stepName, status: 'error', stderr });
-                                resolve({ code: -1, stdout, stderr });
-                            }
-                        });
-                    });
-                }
-                const npxCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npx.cmd' : 'npx';
-                const npmCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npm.cmd' : 'npm';
-                // 1. Peer deps
-                let peerDepsResult = await runStep(npxCmd, ['install-peerdeps', '--dev', 'eslint-config-react-app', '--force', '--legacy-peer-deps'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install peer deps');
-                if (peerDepsResult.code !== 0) {
-                    sendSseEvent({ repo, step: 'Install peer deps fallback', status: 'running', stdout: 'Falling back to direct npm install of eslint-config-react-app and eslint@^8.0.0' });
-                    peerDepsResult = await runStep(npmCmd, ['install', 'eslint-config-react-app', 'eslint@^8.0.0', '--save-dev', '--force', '--legacy-peer-deps'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install peer deps fallback');
-                }
-                // 2. eslint-config-react-app
-                const eslintConfigResult = await runStep(npmCmd, ['install', 'eslint-config-react-app', '--save-dev', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install eslint-config-react-app');
-                // 3. react-scripts
-                const reactScriptsResult = await runStep(npmCmd, ['install', 'react-scripts', '--save-dev', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install react-scripts');
-                // 4. npm install
-                const installResult = await runStep(npmCmd, ['install', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install');
-                // 5. react-scripts build
-                // Check for eslint-config-react-app in node_modules before build
-                const eslintConfigPath = path.join(buildCwd, 'node_modules', 'eslint-config-react-app');
-                if (!fs.existsSync(eslintConfigPath)) {
-                    sendSseEvent({ repo, step: 'Build', status: 'error', stderr: 'eslint-config-react-app not found in node_modules. Build aborted.' });
-                    pushDebug(`[build-deploy] ${repo}: eslint-config-react-app missing in node_modules, aborting build.`);
-                    // Extra logging for troubleshooting
+                // Check if repo has package.json with build script
+                const packageJsonPath = path.join(repoDir, 'package.json');
+                let hasNpmBuildScript = false;
+                let buildScriptContent = '';
+                if (fs.existsSync(packageJsonPath)) {
                     try {
-                        const nodeModules = fs.readdirSync(path.join(buildCwd, 'node_modules'));
-                        pushDebug(`[build-deploy] ${repo}: node_modules contents: ${JSON.stringify(nodeModules)}`);
+                        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+                        if (packageJson.scripts && packageJson.scripts.build) {
+                            hasNpmBuildScript = true;
+                            buildScriptContent = packageJson.scripts.build;
+                            pushDebug(`[build-deploy] ${repo}: Found npm build script: ${buildScriptContent}`);
+                        }
                     }
                     catch (e) {
-                        let errMsg = 'unknown error';
-                        if (e && typeof e === 'object' && 'message' in e) {
-                            errMsg = e.message;
-                        }
-                        else if (typeof e === 'string') {
-                            errMsg = e;
-                        }
-                        pushDebug(`[build-deploy] ${repo}: failed to read node_modules: ${errMsg}`);
+                        pushDebug(`[build-deploy] ${repo}: Error reading package.json: ${e}`);
                     }
-                    pushDebug(`[build-deploy] ${repo}: peerDepsResult.code=${peerDepsResult.code}, eslintConfigResult.code=${eslintConfigResult.code}, reactScriptsResult.code=${reactScriptsResult.code}, installResult.code=${installResult.code}`);
-                    pushDebug(`[build-deploy] ${repo}: peerDepsResult.stderr=${peerDepsResult.stderr}`);
-                    pushDebug(`[build-deploy] ${repo}: eslintConfigResult.stderr=${eslintConfigResult.stderr}`);
-                    pushDebug(`[build-deploy] ${repo}: reactScriptsResult.stderr=${reactScriptsResult.stderr}`);
-                    pushDebug(`[build-deploy] ${repo}: installResult.stderr=${installResult.stderr}`);
-                    buildOk = false;
-                    // Skip build and gulp war
-                    var buildResult = { code: -1, stdout: '', stderr: 'eslint-config-react-app missing' };
-                    var gulpResult = { code: -1, stdout: '', stderr: 'Build not run due to missing eslint-config-react-app' };
+                }
+                if (hasNpmBuildScript) {
+                    sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `$ cd ${buildCwd}\n$ npm run build` });
+                    // Helper to run a child process with timeout and error handling
+                    async function runStep(cmd, args, opts, stepName, timeoutMs = 600000) {
+                        return await new Promise((resolve) => {
+                            const child = spawn(cmd, args, opts);
+                            let stdout = '';
+                            let stderr = '';
+                            let finished = false;
+                            const timeout = setTimeout(() => {
+                                if (!finished) {
+                                    finished = true;
+                                    try {
+                                        child.kill('SIGKILL');
+                                    }
+                                    catch { }
+                                    stderr += `\n[ERROR] Timeout after ${timeoutMs / 1000}s`;
+                                    sendSseEvent({ repo, step: stepName, status: 'error', stderr });
+                                    resolve({ code: -2, stdout, stderr });
+                                }
+                            }, timeoutMs);
+                            child.stdout.on('data', d => {
+                                stdout += d.toString();
+                                sendSseEvent({ repo, step: stepName, status: 'running', stdout });
+                            });
+                            child.stderr.on('data', d => {
+                                stderr += d.toString();
+                                sendSseEvent({ repo, step: stepName, status: 'running', stderr });
+                            });
+                            child.on('close', code => {
+                                if (!finished) {
+                                    finished = true;
+                                    clearTimeout(timeout);
+                                    resolve({ code: typeof code === 'number' ? code : -1, stdout, stderr });
+                                }
+                            });
+                            child.on('error', err => {
+                                if (!finished) {
+                                    finished = true;
+                                    clearTimeout(timeout);
+                                    stderr += `\n[ERROR] ${err?.message || err}`;
+                                    sendSseEvent({ repo, step: stepName, status: 'error', stderr });
+                                    resolve({ code: -1, stdout, stderr });
+                                }
+                            });
+                        });
+                    }
+                    const npmCmd = process.platform === 'win32' ? 'C:\\Program Files\\nodejs\\npm.cmd' : 'npm';
+                    // Check for and handle missing private packages before build
+                    const nodeModulesPath = path.join(buildCwd, 'node_modules');
+                    // Read package.json to determine required private packages and modify it to use local paths
+                    const packageJsonPath = path.join(buildCwd, 'package.json');
+                    let requiredPrivatePackages = [];
+                    let packageJsonModified = false;
+                    if (fs.existsSync(packageJsonPath)) {
+                        try {
+                            const packageJsonContent = fs.readFileSync(packageJsonPath, 'utf8');
+                            const packageJson = JSON.parse(packageJsonContent);
+                            const originalPackageJson = JSON.parse(packageJsonContent); // Keep original for backup
+                            const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                            // Find packages that start with @gots or @mtc2
+                            requiredPrivatePackages = Object.keys(dependencies).filter(pkg => pkg.startsWith('@gots/') || pkg.startsWith('@mtc2/'));
+                            pushDebug(`[build-deploy] ${repo}: Required private packages: ${requiredPrivatePackages.join(', ')}`);
+                            sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `Checking for private packages: ${requiredPrivatePackages.join(', ')}` });
+                            // Search for private packages and modify package.json to use local paths
+                            const basePaths = process.env.BASE_PATHS ? process.env.BASE_PATHS.split(',').map(p => p.trim()) : [];
+                            for (const packageName of requiredPrivatePackages) {
+                                let packageSourcePath = '';
+                                // Look for package in other projects
+                                for (const basePath of basePaths) {
+                                    if (fs.existsSync(basePath)) {
+                                        const children = fs.readdirSync(basePath, { withFileTypes: true });
+                                        for (const child of children) {
+                                            if (child.isDirectory()) {
+                                                const potentialPackagePath = path.join(basePath, child.name, 'node_modules', packageName);
+                                                if (fs.existsSync(potentialPackagePath)) {
+                                                    packageSourcePath = potentialPackagePath;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (packageSourcePath)
+                                            break;
+                                    }
+                                }
+                                if (packageSourcePath) {
+                                    pushDebug(`[build-deploy] ${repo}: Found ${packageName} at ${packageSourcePath}`);
+                                    sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `Found ${packageName} at source location` });
+                                    // Modify package.json to use file path instead of version
+                                    if (packageJson.dependencies && packageJson.dependencies[packageName]) {
+                                        packageJson.dependencies[packageName] = `file:${packageSourcePath}`;
+                                        packageJsonModified = true;
+                                        pushDebug(`[build-deploy] ${repo}: Modified dependencies.${packageName} to use file:${packageSourcePath}`);
+                                    }
+                                    if (packageJson.devDependencies && packageJson.devDependencies[packageName]) {
+                                        packageJson.devDependencies[packageName] = `file:${packageSourcePath}`;
+                                        packageJsonModified = true;
+                                        pushDebug(`[build-deploy] ${repo}: Modified devDependencies.${packageName} to use file:${packageSourcePath}`);
+                                    }
+                                }
+                                else {
+                                    pushDebug(`[build-deploy] ${repo}: Could not find source for ${packageName}`);
+                                    sendSseEvent({ repo, step: 'Build', status: 'running', stderr: `Warning: Could not find source for ${packageName}` });
+                                }
+                            }
+                            // Write modified package.json if changes were made
+                            if (packageJsonModified) {
+                                fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                                pushDebug(`[build-deploy] ${repo}: Modified package.json to use local paths for private packages`);
+                                sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `Modified package.json to use local paths for private packages` });
+                                // Create a backup of the original package.json
+                                fs.writeFileSync(packageJsonPath + '.backup', JSON.stringify(originalPackageJson, null, 2));
+                            }
+                        }
+                        catch (error) {
+                            pushDebug(`[build-deploy] ${repo}: Error processing package.json: ${error}`);
+                            sendSseEvent({ repo, step: 'Build', status: 'running', stderr: `Error processing package.json: ${error}` });
+                        }
+                    }
+                    // Run npm build script
+                    const buildResult = await runStep(npmCmd, ['run', 'build'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'npm run build');
+                    // Restore original package.json if it was modified
+                    if (packageJsonModified) {
+                        const backupPath = packageJsonPath + '.backup';
+                        if (fs.existsSync(backupPath)) {
+                            try {
+                                fs.copyFileSync(backupPath, packageJsonPath);
+                                fs.unlinkSync(backupPath);
+                                pushDebug(`[build-deploy] ${repo}: Restored original package.json`);
+                                sendSseEvent({ repo, step: 'Build', status: 'running', stdout: `Restored original package.json` });
+                            }
+                            catch (e) {
+                                pushDebug(`[build-deploy] ${repo}: Failed to restore original package.json: ${e}`);
+                            }
+                        }
+                    }
+                    buildOk = buildResult.code === 0;
+                    if (buildOk) {
+                        sendSseEvent({ repo, step: 'Build', status: 'success', stdout: buildResult.stdout, stderr: buildResult.stderr });
+                    }
+                    else {
+                        sendSseEvent({ repo, step: 'Build', status: 'error', stdout: buildResult.stdout, stderr: buildResult.stderr });
+                    }
                 }
                 else {
-                    // 5. react-scripts build
-                    const buildResult = await runStep(npxCmd, ['react-scripts', 'build'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'react-scripts build');
-                    // Always install gulp before running gulp war
-                    const gulpInstallResult = await runStep(npmCmd, ['install', 'gulp', '--save-dev', '--legacy-peer-deps', '--force'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'Install gulp');
-                    // 6. gulp war
-                    const gulpResult = await runStep(npxCmd, ['gulp', 'war'], { cwd: buildCwd, stdio: ['ignore', 'pipe', 'pipe'] }, 'gulp war');
-                    // If any step failed, set buildOk = false
-                    buildOk = [peerDepsResult, eslintConfigResult, reactScriptsResult, installResult, buildResult, gulpInstallResult, gulpResult].every((r) => r.code === 0);
-                    if (!buildOk) {
-                        pushDebug(`[build-deploy] ${repo}: One or more build steps failed. Codes: peerDeps=${peerDepsResult.code}, eslintConfig=${eslintConfigResult.code}, reactScripts=${reactScriptsResult.code}, install=${installResult.code}, build=${buildResult.code}, gulpInstall=${gulpInstallResult.code}, gulp=${gulpResult.code}`);
-                    }
+                    sendSseEvent({ repo, step: 'Build', status: 'error', stderr: 'No npm build script found in package.json' });
+                    pushDebug(`[build-deploy] ${repo}: No npm build script found in package.json`);
+                    buildOk = false;
                 }
                 // ...existing code...
             }
@@ -819,9 +891,20 @@ app.post('/api/versioning/build-deploy', express.json(), async (req, res) => {
                     if (pauseMs > 0)
                         await sleep(Math.round(pauseMs * NARRATION_SLOW_FACTOR));
                 };
-                await say(`Preparing to deploy WAR to ${deployFolder}...`, 700);
-                let deployedCount = 0;
-                if (buildOk && warCandidates.length > 0) {
+                // Explicit check: Only deploy if build is complete and WAR file exists
+                if (!buildOk) {
+                    await say('Build step did not complete successfully. Deployment will not start.', 600);
+                    sendSseEvent({ repo, step: 'Deploy WAR', status: 'error', detail: 'Build failed', stdout: deployStdout });
+                    pushDebug(`[build-deploy] ${repo}: Deployment skipped because build failed.`);
+                }
+                else if (warCandidates.length === 0) {
+                    await say('No WARs to deploy. Deployment will not start.', 600);
+                    sendSseEvent({ repo, step: 'Deploy WAR', status: 'error', detail: 'No WARs to deploy', stdout: deployStdout });
+                    pushDebug(`[build-deploy] ${repo}: Deployment skipped because no WAR files found after build.`);
+                }
+                else {
+                    await say(`Preparing to deploy WAR to ${deployFolder}...`, 700);
+                    let deployedCount = 0;
                     const firstWar = warCandidates[0];
                     const destName = path.basename(firstWar);
                     const baseName = destName.replace(/-\d+\.\d+\.\d+.*\.war$/i, '');
@@ -863,16 +946,6 @@ app.post('/api/versioning/build-deploy', express.json(), async (req, res) => {
                     await sleep(Math.round(800 * NARRATION_SLOW_FACTOR));
                     sendSseEvent({ repo, step: 'Deploy WAR', status: deployOk ? 'success' : 'error', warPath, detail: deployError, stdout: deployStdout });
                 }
-                else {
-                    await say('No WARs to deploy.', 600);
-                    sendSseEvent({ repo, step: 'Deploy WAR', status: 'error', detail: 'No WARs to deploy', stdout: deployStdout });
-                    if (!buildOk) {
-                        pushDebug(`[build-deploy] ${repo}: no WARs to deploy because build failed.`);
-                    }
-                    else {
-                        pushDebug(`[build-deploy] ${repo}: no WARs found to deploy after build.`);
-                    }
-                }
             }
             const ok = steps.every(s => s.code === 0) && buildOk && deployOk;
             const combinedStdout = steps.map(s => `# ${s.cmd}\n${s.stdout || ''}`).filter(Boolean).join('\n');
@@ -910,7 +983,17 @@ app.post('/api/versioning/start', express.json(), async (req, res) => {
         });
     }
     // Get deployment folder from client if provided, else use default
-    const deployFolder = body.deploymentFolderPath || 'C:/OPT/jboss-eap-8.0.5/standalone/deployments';
+    const deployFolder = body.deploymentFolderPath || process.env.DEPLOYMENT_PATH || '/app/deployments';
+    // Ensure deployment directory exists
+    if (!fs.existsSync(deployFolder)) {
+        try {
+            fs.mkdirSync(deployFolder, { recursive: true });
+            pushDebug(`[versioning] Created deployment directory: ${deployFolder}`);
+        }
+        catch (e) {
+            pushDebug(`[versioning] Failed to create deployment directory: ${e}`);
+        }
+    }
     for (const repo of repos) {
         sendSseEvent({ repo, step: 'Checkout master', status: 'running' });
         let repoDir = null;

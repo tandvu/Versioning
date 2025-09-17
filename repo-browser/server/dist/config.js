@@ -2,8 +2,10 @@ import fs from 'fs';
 import path from 'path';
 const defaultConfig = {
     basePaths: [
-        'C:/AMPT',
-        'C:/AMPT_DEV/TRMC_MODULE'
+        ...(process.env.BASE_PATHS ? process.env.BASE_PATHS.split(',') : [
+            'C:/AMPT',
+            'C:/AMPT_DEV/TRMC_MODULE'
+        ])
     ],
     ignore: {
         'C:/AMPT': [
@@ -28,6 +30,10 @@ const defaultConfig = {
 const runtimeConfigPath = path.resolve(process.cwd(), 'config.runtime.json');
 console.log('[config] Runtime config path:', runtimeConfigPath);
 function loadRuntime() {
+    // If BASE_PATHS env is set, always use it and ignore runtime config
+    if (process.env.BASE_PATHS) {
+        return { basePaths: process.env.BASE_PATHS.split(',') };
+    }
     try {
         if (fs.existsSync(runtimeConfigPath)) {
             const raw = fs.readFileSync(runtimeConfigPath, 'utf8');
