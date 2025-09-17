@@ -1,75 +1,202 @@
-# Repo Browser Distribution Guide
+# Repo Browser Distribution Guide (Docker-Only)
 
-This guide explains how to package, distribute, and run Repo Browser for end users—no source code or build tools required.
+This guide explains how to distribute and run Repo Browser using Docker only. Clients do not need Node.js, npm, or any build tools—just Docker Desktop.
 
-## 1. Packaging the App
+## 1) Client Setup and Run
 
-**Prerequisites:**
-- Node.js 18+ installed (for packaging)
-- PowerShell (Windows)
+Prerequisites:
+- Windows 10/11 with Docker Desktop installed and running
+- PowerShell
+- A Repo Browser Docker image tar file (e.g., repo-browser-image-YYYYMMDD-HHMMSS.tar)
 
-**Steps:**
-1. Open a PowerShell terminal in the repo root.
-2. Run the packaging script:
-   ```powershell
-   npm run package:zip
-   ```
-   This builds the app and creates a ZIP file (e.g. `repo-browser-YYYYMMDD-HHMMSS.zip`).
-3. Find the ZIP in the repo root. It contains:
-   - `dist-package/` folder with:
-     - `runtime/server/dist` (compiled backend)
-     - `runtime/server/node_modules` (production dependencies only)
-     - `runtime/client/dist` (compiled frontend)
-     - `Start-App.bat` (Windows launcher)
-     - `README.txt` (quick usage)
+Quick start (optional): Use the helper script
 
-## 2. Distributing to Users
+```powershell
+# Basic
+./Start-Docker-App.ps1
 
-- Share the ZIP file with users (email, file share, etc.).
-- Users do **not** need Node.js, npm, or any build tools—just the ZIP contents.
+# Advanced: mount local repos, set BASE_PATHS, use root for Windows volume permissions, and follow logs
+./Start-Docker-App.ps1 -Port 3001 `
+  -Mount @("C:\AMPT:/app/AMPT", "C:\AMPT_DEV\TRMC_MODULE:/app/TRMC_MODULE") `
+  -BasePaths @("/app/AMPT", "/app/TRMC_MODULE") `
+  -UseRoot `
+  -Follow
+```
 
-## 3. User Instructions (for ZIP Recipients)
+After it starts, open [http://localhost:3001](http://localhost:3001) in your browser.
 
-**Requirements:**
-- Windows PC
-- Node.js 18+ installed (https://nodejs.org/)
+### Get the image
 
-**Steps:**
-1. Unzip the package anywhere (e.g. `C:\RepoBrowserRuntime`).
-2. Double-click `Start-App.bat` to launch the app.
-   - This starts the backend server and serves the UI.
-   - Default port: `http://localhost:5055`
-3. The browser should open automatically. If not, open your browser and go to:
-   ```
-   http://localhost:5055
-   ```
+Load the image from the .tar file you received (for example, `repo-browser-image-20250917-142239.tar`):
 
-**Notes:**
-- No source code is included—only compiled files and required dependencies.
-- You can move the unzipped folder anywhere on your PC.
-- To change the port, edit `Start-App.bat` and set a different `PORT` value.
-- To stop the app, close the terminal window or press `Ctrl+C` in the terminal.
+```powershell
+# Load the image into Docker
+docker load -i .\repo-browser-image-YYYYMMDD-HHMMSS.tar
 
-## 4. Troubleshooting
+# Verify the image exists
+docker images | findstr repo-browser
+```
 
-| Symptom                | Solution                                  |
-|------------------------|-------------------------------------------|
-| App won’t start        | Ensure Node.js is installed and up to date|
-| Port already in use    | Edit `Start-App.bat` to change `PORT`     |
-| Browser doesn’t open   | Manually visit `http://localhost:5055`    |
-| Missing dependencies   | Re-extract ZIP; ensure antivirus didn’t block files |
+### Start the app (basic)
+Starts the server on [http://localhost:3001](http://localhost:3001) (mapped to container port 5055).
 
-## 5. Advanced
+```powershell
+docker run -d --name repo-browser -p 3001:5055 repo-browser:YYYY.MM.DD-HHmmss
+```
 
-- The server serves the UI and API together—no need to run anything else.
-- For non-Windows users, run the server manually:
-   ```sh
-   cd dist-package/runtime/server
-   NODE_ENV=production SERVE_CLIENT=1 PORT=5055 node dist/index.js
-   ```
-- For updates, distribute a new ZIP and repeat the steps above.
+Port mapping note:
+- The app listens on port 5055 inside the container.
+- The `-p HOST:5055` flag maps that container port to your machine. Change `HOST` (e.g., 3001, 5055) to pick the browser port you want.
+- With the helper script, `-Port` sets the host port (default 3001): `./Start-Docker-App.ps1 -Port 5055`.
+- With raw Docker, use `-p 3001:5055` to expose it on http://localhost:3001 (or change 3001 as needed).
+
+
+### Start with all folders accessible (universal mount)
+Mount your entire C:/ drive so any folder is available in the UI, regardless of client layout.
+
+```powershell
+# Mount all of C:/ as /host in the container
+docker run -d `
+  --name repo-browser `
+  -p 3001:5055 `
+  -v C:/:/host `
+  -e BASE_PATHS=/host `
+  repo-browser:YYYY.MM.DD-HHmmss
+```
+
+Or with the helper:
+
+```powershell
+./Start-Docker-App.ps1 -Port 3001 -Mount @("C:/:/host") -BasePaths @("/host")
+```
+
+Then in the UI, select any path under /host (e.g., /host/AMPT, /host/AMPT_DEV/TRMC_MODULE, etc.).
+
+**Security note:** This gives the container access to all files on your C: drive. Only use on trusted machines. For more privacy, mount just a parent folder as shown above.
+
+Open [http://localhost:3001](http://localhost:3001) in your browser.
+
+Environment variables:
+- BASE_PATHS (comma-separated): Paths inside the container where your repos live. Used to discover projects and to locate private packages for local file installs.
+- DEPLOYMENT_PATH (optional): Where to copy built WAR files inside the container. Default: /app/deployments.
+
+### Why mounts and BASE_PATHS?
+- The app runs inside the container and can only see the container filesystem. Host folders (like `C:\AMPT`) are invisible unless you bind-mount them with `-v`.
+- The UI path selector works with container paths. So a host folder must be mounted to a container path (e.g., `C:\AMPT` -> `/app/AMPT`) to be selectable in the UI.
+- You can’t add new mounts after the container starts; define the folders once at `docker run`. Dynamic UI selection still works—but only within the mounted roots.
+- `BASE_PATHS` constrains where the backend scans for repos and where it looks for private packages to rewrite as `file:` dependencies. Include the mounted roots you want the app to search.
+
+Simplify with a single parent mount:
+
+```powershell
+# Mount a single parent folder and point BASE_PATHS at it
+docker run -d `
+  --name repo-browser `
+  -p 3001:5055 `
+  -v C:/AMPT_DEV:/work `
+  -e BASE_PATHS=/work `
+  repo-browser:YYYY.MM.DD-HHmmss
+```
+
+Or with the helper:
+
+```powershell
+./Start-Docker-App.ps1 -Port 3001 -Mount @("C:\AMPT_DEV:/work") -BasePaths @("/work")
+```
+
+Then in the UI, choose paths like `/work/AMPT` or `/work/TRMC_MODULE`.
+
+### Windows volume permissions (optional)
+If you see EACCES (permission) errors when installing dependencies in mounted folders, start the container as root:
+
+```powershell
+docker run -d `
+  --name repo-browser `
+  -p 3001:5055 `
+  -v C:/AMPT:/app/AMPT `
+  -v C:/AMPT_DEV/TRMC_MODULE:/app/TRMC_MODULE `
+  -e BASE_PATHS=/app/AMPT,/app/TRMC_MODULE `
+  --user root `
+  repo-browser:YYYY.MM.DD-HHmmss
+```
+
+### Stop and view logs
+
+```powershell
+# Stop the container by name
+docker stop repo-browser
+
+# Tail logs
+docker logs --tail 200 -f repo-browser
+
+# Or use the helper (timestamps, filters, follow)
+./Tail-Backend-Logs.ps1 -Since 30m -Follow -Filter "error|warn"
+```
+
+### Cleanup (optional)
+
+```powershell
+# Remove the container and the image (replace the tag with your actual date/time tag)
+docker rm -f repo-browser
+docker rmi repo-browser:YYYY.MM.DD-HHmmss
+```
+
+### Troubleshooting
+- Port 3001 in use: change the left side of -p 3001:5055 (e.g., -p 5055:5055) and browse to that port.
+
+  Examples:
+
+  ```powershell
+  # Use port 5055 on the host with the helper, then open http://localhost:5055
+  ./Start-Docker-App.ps1 -Port 5055
+  ```
+
+  ```powershell
+  # Raw docker (basic)
+  docker run -d --name repo-browser -p 5055:5055 repo-browser:YYYY.MM.DD-HHmmss
+  ```
+
+- Repos not detected: confirm your host paths are correct and included in BASE_PATHS.
+- Private packages 404 from npm: the app rewrites package.json to use local file: paths based on BASE_PATHS.
+- Permission errors on Windows mounts: add --user root to docker run.
 
 ---
+
+## 2) Distributor Notes (internal use)
+
+Use these steps if you are building and shipping the Docker image to clients.
+
+Quick path (script):
+
+```powershell
+# From repo root; rebuilds, tags the image with today's datetime (yyyy.MM.dd-HHmmss) and 'latest', then produces a timestamped tar
+./Build-And-Save-Image.ps1
+
+# Optional: set a custom tag, output directory, and generate a checksum
+./Build-And-Save-Image.ps1 -Tag 2025.09.17-142530 -OutputDir .\dist-image -GenerateChecksum
+```
+
+### Build the image from source
+From the repository root:
+
+```powershell
+docker build -t repo-browser:latest .
+```
+
+### Save to a .tar file for offline distribution
+
+```powershell
+docker save -o .\repo-browser-image.tar repo-browser:latest
+
+# Optional: compute a checksum to share with clients
+Get-FileHash -Algorithm SHA256 .\repo-browser-image.tar
+```
+
+Recommended:
+- Use date-based tags to identify releases (the build script does this for you).
+- Provide this README alongside the .tar file.
+
+---
+
 For questions or help, contact the maintainer or open an issue in the repo.
 
-See also: `USER_GUIDE.md` for how end users run and operate the app.
