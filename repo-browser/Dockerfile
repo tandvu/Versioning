@@ -50,12 +50,12 @@ RUN adduser -S nodejs -u 1001
 RUN chown -R nodejs:nodejs /app
 USER nodejs
 
-# Expose the port the app runs on
-EXPOSE 3001
+# Expose the port the app runs on (server listens on 5055)
+EXPOSE 5055
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:5055/ || exit 1
 
 # Start the server in production mode (serving client files)
 CMD ["npm", "run", "start:prod"]

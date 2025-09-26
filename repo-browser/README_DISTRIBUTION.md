@@ -76,6 +76,17 @@ Then in the UI, select any path under /host (e.g., /host/AMPT, /host/AMPT_DEV/TR
 
 Open [http://localhost:3001](http://localhost:3001) in your browser.
 
+Windows GUI quick setup (Docker Desktop):
+- Volumes (Mounts): Host path = C:/, Container path = /host (use forward slashes)
+- Environment variables: BASE_PATHS = /host
+- Ports: 3001 (host) -> 5055 (container)
+- Then, in the app, browse paths under /host (e.g., /host/AMPT, /host/AMPT_DEV/TRMC_MODULE).
+
+Windows-to-container path mapping examples:
+- C:\AMPT -> /host/AMPT
+- C:\AMPT_DEV\TRMC_MODULE -> /host/AMPT_DEV/TRMC_MODULE
+- C:\OPT\jboss-eap-8.0.5\standalone\deployments -> /host/OPT/jboss-eap-8.0.5/standalone/deployments
+
 Environment variables:
 - BASE_PATHS (comma-separated): Paths inside the container where your repos live. Used to discover projects and to locate private packages for local file installs.
 - DEPLOYMENT_PATH (optional): Where to copy built WAR files inside the container. Default: /app/deployments.
